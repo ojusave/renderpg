@@ -34,6 +34,14 @@ test('transfer succeeds only after authority is verified', () => {
   assert.equal(verified.status, 'completed');
 });
 
+test('game master text is at most two sentences', () => {
+  const fill = offlineFill();
+  fill.choices.review_account_record.consequence = 'One. Two. Three.';
+  const state = applyChoice(openPlay(fill), fill, 'review_account_record');
+  const text = state.transcript.at(-1)!.text;
+  assert.ok((text.match(/[.!?](\s|$)/g) ?? []).length <= 2, text);
+});
+
 test('sign-in claims a ready scenario and begin does not fill another', async () => {
   const store = new MemoryScenarioStore();
   let fills = 0;

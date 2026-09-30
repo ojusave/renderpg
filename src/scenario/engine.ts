@@ -61,10 +61,20 @@ function changesFor(action: ActionId, verified: boolean): Stats {
   return { ...zero, focus: 4 };
 }
 
+/** Keeps game master text to at most two sentences. */
+export function twoSentences(text: string): string {
+  const sentences = text.replace(/\s+/g, ' ').trim().match(/[^.!?]+[.!?]+/g) ?? [text.trim()];
+  return sentences.slice(0, 2).map(sentence => sentence.trim()).join(' ');
+}
+
+function said(input: string, outcome: Turn['outcome'], text: string): Turn {
+  return { id: randomUUID(), input, outcome, text: twoSentences(text) };
+}
+
 function finish(state: PlayState, endingId: EndingId, text: string, input: string): PlayState {
   return {
     ...state, stage: 'resolution', status: 'completed', endingId, version: state.version + 1,
-    transcript: [...state.transcript, { id: randomUUID(), input, outcome: 'completed', text }],
+    transcript: [...state.transcript, said(input, 'completed', text)],
   };
 }
 
@@ -72,7 +82,7 @@ function finish(state: PlayState, endingId: EndingId, text: string, input: strin
 export function applyChoice(state: PlayState, fill: ScenarioFill, action: ActionId): PlayState {
   if (!legalActions(state).includes(action)) return {
     ...state, version: state.version + 1, lastChanges: { ...zero },
-    transcript: [...state.transcript, { id: randomUUID(), input: action, outcome: 'rejected', text: 'That response is not available at this stage.' }],
+    transcript: [...state.transcript, said(action, 'rejected', 'That response is not available at this stage.')],
   };
   const choice = fill.choices[action];
   const revealed = evidenceOf[action] && !state.revealed.includes(evidenceOf[action]!) ? [...state.revealed, evidenceOf[action]!] : state.revealed;
@@ -84,15 +94,15 @@ export function applyChoice(state: PlayState, fill: ScenarioFill, action: Action
     stats: shift(state.stats, changes), lastChanges: changes, tally: { ...state.tally, [tone]: state.tally[tone] + 1 },
   };
   if (action === 'review_account_record' || action === 'check_ownership_history') {
-    return { ...next, stage: 'verify', transcript: [...state.transcript, { id: randomUUID(), input: action, outcome: 'applied', text: `${fill.evidence[evidenceOf[action]!].text}\n${choice.consequence}` }] };
+    return { ...next, stage: 'verify', transcript: [...state.transcript, said(action, 'applied', `${fill.evidence[evidenceOf[action]!].text} ${choice.consequence}`)] };
   }
   if (action === 'verify_requester_authority' || action === 'request_more_evidence') {
-    return { ...next, stage: 'decide', transcript: [...state.transcript, { id: randomUUID(), input: action, outcome: 'applied', text: `${fill.evidence.requester_authority.text}\n${choice.consequence}` }] };
+    return { ...next, stage: 'decide', transcript: [...state.transcript, said(action, 'applied', `${fill.evidence.requester_authority.text} ${choice.consequence}`)] };
   }
-  if (action === 'escalate') return finish(next, 'escalation', `${choice.consequence}\n${fill.endings.escalation.summary}`, action);
-  if (action === 'decline_transfer') return finish(next, 'declined', `${choice.consequence}\n${fill.endings.declined.summary}`, action);
+  if (action === 'escalate') return finish(next, 'escalation', `${choice.consequence} ${fill.endings.escalation.summary}`, action);
+  if (action === 'decline_transfer') return finish(next, 'declined', `${choice.consequence} ${fill.endings.declined.summary}`, action);
   const ending: EndingId = verified ? 'success' : 'incorrect_transfer';
-  return finish(next, ending, `${choice.consequence}\n${fill.endings[ending].summary}`, action);
+  return finish(next, ending, `${choice.consequence} ${fill.endings[ending].summary}`, action);
 }
 
 const endingResult: Record<EndingId, EndingResult> = {

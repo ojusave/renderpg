@@ -30,7 +30,7 @@ export class AnthropicAuthor implements ScenarioAuthor {
     });
     const message = await this.client.messages.create({
       model: this.model, max_tokens: 2500,
-      system: 'Fill an existing account-ownership training framework. Use only the supplied source. Write professional, complete sentences. Do not invent policy, offices, travel, visits, credentials, or new actions. Every sourceExcerpt must be copied exactly from the source. Choice labels are workplace actions such as review, verify, request evidence, transfer, decline, or escalate.',
+      system: 'Fill an existing account-ownership training framework. Use only the supplied source. Write professional, complete sentences. Do not invent policy, offices, travel, visits, credentials, or new actions. Every sourceExcerpt must be copied exactly from the source. Choice labels are workplace actions such as review, verify, request evidence, transfer, decline, or escalate. Each evidence text and each consequence is exactly one sentence, so the game master never says more than two sentences.',
       messages: [{ role: 'user', content: JSON.stringify({ sourcePrompt: prompt }) }],
       output_config: { format: { type: 'json_schema', schema } },
     });
