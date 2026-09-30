@@ -1,0 +1,20 @@
+# Keep the existing local database and volume when the project directory moves.
+name: backend
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: renderpg
+      POSTGRES_PASSWORD: renderpg
+      POSTGRES_DB: renderpg
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - renderpg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U renderpg -d renderpg"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+volumes:
+  renderpg-data:

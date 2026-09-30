@@ -1,0 +1,587 @@
+openapi: 3.1.0
+info:
+  title: RenderPG Backend
+  version: 0.2.0
+  description: |
+    Prompt-driven Zork-style adventure backend.
+    The console is an HTTP client, not a second game implementation.
+    Each accepted request increments version, including rejected gameplay actions.
+    Keep creation idempotency keys confidential: replay can recover the session token.
+servers:
+  - url: /
+paths:
+  /health:
+    get:
+      operationId: health
+      summary: Check API and database availability
+      responses:
+        '200':
+          description: Database is reachable
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status, ai]
+                properties:
+                  status:
+                    const: ok
+                  ai:
+                    type: object
+                    additionalProperties: false
+                    required: [mode, natural_language, generation, narration]
+                    description: Configured capabilities. This check does not make a live provider request.
+                    properties:
+                      mode:
+                        enum: [offline, anthropic]
+                      natural_language:
+                        type: boolean
+                      generation:
+                        type: boolean
+                      narration:
+                        type: boolean
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /sessions:
+    post:
+      operationId: signIn
+      summary: Start a session and claim or fill the account-ownership scenario
+      responses:
+        '200':
+          description: Session assigned a ready scenario, or a fill is running
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionState'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /sessions/current:
+    get:
+      operationId: readSession
+      summary: Read scenario preparation or the opened play-through
+      parameters:
+        - $ref: '#/components/parameters/SessionAuthorization'
+      responses:
+        '200':
+          description: Preparation status. Game is present only after begin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionState'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /sessions/current/begin:
+    post:
+      operationId: beginScenario
+      summary: Open the scenario already assigned to this session
+      parameters:
+        - $ref: '#/components/parameters/SessionAuthorization'
+      responses:
+        '200':
+          description: Playable scenario view. No model call is made.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /sessions/current/choices:
+    post:
+      operationId: chooseScenarioAction
+      summary: Apply one blueprint action
+      parameters:
+        - $ref: '#/components/parameters/SessionAuthorization'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action_id, expected_version]
+              properties:
+                action_id:
+                  type: string
+                  minLength: 1
+                  maxLength: 80
+                expected_version:
+                  type: integer
+                  minimum: 0
+      responses:
+        '200':
+          description: Updated scenario view
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/InvalidRequest'
+  /openapi.json:
+    get:
+      operationId: getContract
+      summary: Retrieve the OpenAPI contract
+      responses:
+        '200':
+          description: OpenAPI document
+          content:
+            application/json:
+              schema:
+                type: object
+  /games:
+    post:
+      operationId: createGame
+      summary: Generate and persist a playable adventure from a curated prompt
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [prompt]
+              properties:
+                prompt:
+                  type: string
+                  minLength: 20
+                  maxLength: 12000
+                  description: Curated source scenario. This is the only operational source of truth for generation.
+      responses:
+        '201':
+          description: Persisted opening and session access token. Preserve the token to resume.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [game, session_token]
+                properties:
+                  game:
+                    $ref: '#/components/schemas/Game'
+                  session_token:
+                    type: string
+        '202':
+          description: Compilation is running in a workflow. Poll the generation URL with the same run id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunningGeneration'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/InvalidRequest'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /games/generations/{run_id}:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 8
+          maxLength: 200
+    get:
+      operationId: getGeneration
+      summary: Read a game compilation started by POST /games
+      responses:
+        '200':
+          description: The compilation is running, has failed, or the game is ready to play.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/RunningGeneration'
+                  - $ref: '#/components/schemas/FailedGeneration'
+                  - $ref: '#/components/schemas/ReadyGeneration'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /games/{game_id}:
+    parameters:
+      - $ref: '#/components/parameters/GameId'
+    get:
+      operationId: getGame
+      summary: Resume the saved game with its player-visible transcript
+      security:
+        - sessionToken: []
+      responses:
+        '200':
+          description: Current game, excluding hidden clues and solution rules
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/InvalidRequest'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /games/{game_id}/turns:
+    parameters:
+      - $ref: '#/components/parameters/GameId'
+    post:
+      operationId: submitTurn
+      summary: Resolve one player command
+      description: |
+        Impossible actions and clarification requests are ordinary gameplay outcomes.
+        Identical retries return the stored response. Reusing a key with a different
+        payload, a stale expected_version, or acting in a terminal game returns 409.
+        Model failure must not leave a partially committed game state.
+      security:
+        - sessionToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [text, expected_version]
+              properties:
+                text:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+                expected_version:
+                  type: integer
+                  minimum: 0
+            example:
+              text: Examine the customer's evidence
+              expected_version: 0
+      responses:
+        '200':
+          description: Saved turn and resulting visible game state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/InvalidRequest'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  securitySchemes:
+    sessionToken:
+      type: http
+      scheme: bearer
+      description: Opaque session credential. Grants access only to its game.
+  parameters:
+    GameId:
+      name: game_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SessionAuthorization:
+      name: Authorization
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: '^Bearer [A-Za-z0-9_-]{43}$'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Client-generated unpredictable request identifier, reused only for retries.
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    SessionState:
+      type: object
+      additionalProperties: false
+      required: [status, session_token, run_id, message, game]
+      properties:
+        status:
+          enum: [preparing, ready, failed]
+        session_token:
+          type: string
+        run_id:
+          type: [string, 'null']
+        message:
+          type: [string, 'null']
+        game:
+          anyOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/Game'
+    RunningGeneration:
+      type: object
+      additionalProperties: false
+      required: [status, run_id]
+      properties:
+        status:
+          const: running
+        run_id:
+          type: string
+    FailedGeneration:
+      type: object
+      additionalProperties: false
+      required: [status, message]
+      properties:
+        status:
+          const: failed
+        message:
+          type: string
+    ReadyGeneration:
+      type: object
+      additionalProperties: false
+      required: [status, game, session_token]
+      properties:
+        status:
+          const: ready
+        game:
+          $ref: '#/components/schemas/Game'
+        session_token:
+          type: string
+    Game:
+      type: object
+      additionalProperties: false
+      required: [id, version, status, title, objective, location, visible_entities, inventory, available_actions, stage, ending, transcript, stats, stat_changes, turn, turn_budget, choice_tally]
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 0
+        status:
+          type: string
+          enum: [active, completed]
+        title:
+          type: string
+        objective:
+          type: string
+        location:
+          type: object
+          additionalProperties: false
+          required: [id, name, description]
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            description:
+              type: string
+        visible_entities:
+          type: array
+          items:
+            $ref: '#/components/schemas/Entity'
+        inventory:
+          type: array
+          items:
+            $ref: '#/components/schemas/Entity'
+        available_actions:
+          type: array
+          description: Actions the player can take in the current scene.
+          items:
+            $ref: '#/components/schemas/Action'
+        stage:
+          type: string
+          description: Player-visible milestone label, not hidden completion conditions.
+        ending:
+          anyOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/Ending'
+        transcript:
+          type: array
+          items:
+            $ref: '#/components/schemas/Turn'
+        stats:
+          $ref: '#/components/schemas/Stats'
+        stat_changes:
+          $ref: '#/components/schemas/StatChanges'
+        turn:
+          type: integer
+          minimum: 0
+          description: Applied player actions so far, excluding the opening.
+        turn_budget:
+          type: integer
+          minimum: 1
+          description: Shortest path to a success ending.
+        choice_tally:
+          $ref: '#/components/schemas/ChoiceTally'
+    Turn:
+      type: object
+      additionalProperties: false
+      required: [id, input, text, outcome]
+      properties:
+        id:
+          type: string
+          format: uuid
+        input:
+          type: [string, 'null']
+        text:
+          type: string
+        outcome:
+          type: string
+          enum: [opening, applied, rejected, clarification, completed]
+    Action:
+      type: object
+      additionalProperties: false
+      required: [id, label, command]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        command:
+          type: string
+          description: Literal command that resolves this action.
+    Entity:
+      type: object
+      additionalProperties: false
+      required: [id, name, kind]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        kind:
+          enum: [item, character, clue]
+    Stats:
+      type: object
+      additionalProperties: false
+      required: [energy, focus, reputation, team_trust]
+      properties:
+        energy:
+          type: integer
+          minimum: 0
+          maximum: 100
+        focus:
+          type: integer
+          minimum: 0
+          maximum: 100
+        reputation:
+          type: integer
+          minimum: 0
+          maximum: 100
+        team_trust:
+          type: integer
+          minimum: 0
+          maximum: 100
+    StatChanges:
+      type: object
+      additionalProperties: false
+      required: [energy, focus, reputation, team_trust]
+      properties:
+        energy:
+          type: integer
+          minimum: -100
+          maximum: 100
+        focus:
+          type: integer
+          minimum: -100
+          maximum: 100
+        reputation:
+          type: integer
+          minimum: -100
+          maximum: 100
+        team_trust:
+          type: integer
+          minimum: -100
+          maximum: 100
+    ChoiceTally:
+      type: object
+      additionalProperties: false
+      required: [careful, team, bold, reckless]
+      properties:
+        careful:
+          type: integer
+          minimum: 0
+        team:
+          type: integer
+          minimum: 0
+        bold:
+          type: integer
+          minimum: 0
+        reckless:
+          type: integer
+          minimum: 0
+    Ending:
+      type: object
+      additionalProperties: false
+      required: [id, title, result, summary]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        result:
+          enum: [success, partial_success, failure]
+        summary:
+          type: string
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message, retryable]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        retryable:
+          type: boolean
+  responses:
+    Conflict:
+      description: Stale state, completed game, or conflicting reuse of an idempotency key
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    PayloadTooLarge:
+      description: Request exceeds the 16 KiB body limit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InvalidRequest:
+      description: Invalid request shape or values
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing or invalid session token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Game does not exist or belongs to a different session
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unavailable:
+      description: Temporary provider or storage failure; retry with the same idempotency key
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
