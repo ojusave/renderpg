@@ -146,8 +146,8 @@ test('interrupted HTTP response preserves its request and replays without advanc
     const resumed = launchConsole(directory, url);
     consoles.push(resumed);
     await resumed.waitFor('\n> ');
-    assert.match(resumed.output(), /The record lists/);
-    assert.match(resumed.output(), /wants the account moved without a check/);
+    assert.match(resumed.output(), /The account has one owner/);
+    assert.match(resumed.output(), /How do you confirm .+ should take over\?/);
     assert.equal(play()?.version, 1, 'replaying must not add a second turn');
     const from = resumed.output().length;
     resumed.child.stdin.write('2\n');

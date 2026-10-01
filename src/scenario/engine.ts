@@ -1,23 +1,27 @@
 import { randomUUID } from 'node:crypto';
 import { INITIAL_STATS, type ChoiceTone, type EndingResult, type Stats } from '../adventure/definition.js';
 import type { GameView, Turn } from '../game/types.js';
-import { accountOwnershipBlueprint, type ActionId, type EndingId, type EvidenceId, type StageId } from './blueprint.js';
+import { caseBlueprint, type ActionId, type EndingId, type EvidenceId, type StageId } from './blueprint.js';
 import type { ScenarioFill } from './fill.js';
 
 /** The question on screen. It changes with the stage so every listed option answers it. */
 export function stageQuestion(fill: ScenarioFill, stage: StageId, verified: boolean): string {
-  if (stage === 'investigate') return fill.questions.investigate;
-  if (stage === 'decide' && verified) return fill.questions.decide_verified;
-  if (stage === 'decide') return fill.questions.decide_unverified;
+  if (stage === 'investigate') return fill.investigate.question;
+  if (stage === 'decide') return (verified ? fill.after_check : fill.after_shortcut).question;
   return stage === 'intake' ? 'What do you do first?' : 'Resolution';
 }
 
 /** The option label for this action in the current state. The last question has two wordings. */
 export function choiceLabel(fill: ScenarioFill, action: ActionId, verified: boolean): string {
-  if (action === 'transfer_account' || action === 'decline_transfer' || action === 'escalate') {
-    return fill.decide[verified ? 'verified' : 'unverified'][action];
+  return rawLabel(fill, action, verified).trim().replace(/\.$/, '');
+}
+
+function rawLabel(fill: ScenarioFill, action: ActionId, verified: boolean): string {
+  switch (action) {
+    case 'look_first': case 'act_now': case 'refuse': return fill.first[action];
+    case 'verify': case 'shortcut': case 'hand_off_early': return fill.investigate[action];
+    default: return (verified ? fill.after_check : fill.after_shortcut)[action];
   }
-  return fill.choices[action].label;
 }
 
 export interface PlayState {
@@ -37,10 +41,10 @@ export interface PlayState {
 const zero: Stats = { energy: 0, focus: 0, reputation: 0, team_trust: 0 };
 
 const endingResult: Record<EndingId, EndingResult> = {
-  transferred_too_early: 'failure', turned_away: 'failure', escalated_early: 'partial_success',
-  success: 'success', unverified_transfer: 'failure',
-  declined_verified: 'failure', declined_unverified: 'partial_success',
-  escalated_verified: 'partial_success', escalated_unverified: 'partial_success',
+  acted_too_early: 'failure', refused: 'failure', handed_off_early: 'partial_success',
+  success: 'success', acted_unchecked: 'failure',
+  held_after_check: 'failure', held_unchecked: 'partial_success',
+  handed_off_after_check: 'partial_success', handed_off_unchecked: 'partial_success',
 };
 
 /** Opens a play-through on the first question. The briefing is the scene, not a choice. */
@@ -55,17 +59,36 @@ export function openPlay(fill: ScenarioFill): PlayState {
 /** Returns the actions the blueprint allows in this state. */
 export function legalActions(state: PlayState): ActionId[] {
   if (state.status === 'completed') return [];
-  return accountOwnershipBlueprint.stages.find(item => item.id === state.stage)?.actions ?? [];
+  return caseBlueprint.stages.find(item => item.id === state.stage)?.actions ?? [];
+}
+
+const sentenceEnd = /(?<!\b(?:a\.m|p\.m|e\.g|i\.e|Mr|Ms|Mrs|Dr|vs|etc|[A-Z]))[.!?]["”']?(?=\s+["“]?[A-Z0-9]|\s*$)/g;
+
+function sentences(text: string): string[] {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const parts: string[] = [];
+  let from = 0;
+  for (const match of flat.matchAll(sentenceEnd)) {
+    const to = match.index! + match[0].length;
+    const before = flat.slice(0, to);
+    const straight = (before.match(/"/g) ?? []).length;
+    const curly = (before.match(/\u201c/g) ?? []).length - (before.match(/\u201d/g) ?? []).length;
+    if (straight % 2 === 1 || curly > 0) continue;
+    parts.push(flat.slice(from, to).trim());
+    from = to;
+  }
+  const rest = flat.slice(from).trim();
+  if (rest) parts.push(rest);
+  return parts;
 }
 
 /** Keeps game master text to at most two sentences. */
 export function twoSentences(text: string): string {
-  const sentences = text.replace(/\s+/g, ' ').trim().match(/[^.!?]+[.!?]+/g) ?? [text.trim()];
-  return sentences.slice(0, 2).map(sentence => sentence.trim()).join(' ');
+  return sentences(text).slice(0, 2).join(' ');
 }
 
 function firstSentence(text: string): string {
-  return twoSentences(text).match(/^[^.!?]+[.!?]+/)?.[0] ?? text.trim();
+  return sentences(text)[0] ?? '';
 }
 
 function shift(stats: Stats, changes: Stats): Stats {
@@ -81,21 +104,21 @@ type Outcome = { tone: ChoiceTone; changes: Partial<Stats>; next?: StageId; reve
 /** The whole case as a table: what each choice means in the current state. */
 function outcomeOf(action: ActionId, verified: boolean): Outcome {
   switch (action) {
-    case 'open_record': return { tone: 'careful', changes: { focus: 4 }, next: 'investigate', reveal: 'account_record' };
-    case 'transfer_now': return { tone: 'reckless', changes: { reputation: -12 }, ending: 'transferred_too_early' };
-    case 'turn_away': return { tone: 'bold', changes: { reputation: -8 }, ending: 'turned_away' };
-    case 'trace_owner': return { tone: 'careful', changes: { focus: 4, team_trust: 4 }, next: 'decide', reveal: 'owner_trace', verified: true };
-    case 'take_word': return { tone: 'bold', changes: { reputation: -4 }, next: 'decide' };
-    case 'escalate_early': return { tone: 'team', changes: { team_trust: 2 }, ending: 'escalated_early' };
-    case 'transfer_account': return verified
+    case 'look_first': return { tone: 'careful', changes: { focus: 4 }, next: 'investigate', reveal: 'first_look' };
+    case 'act_now': return { tone: 'reckless', changes: { reputation: -12 }, ending: 'acted_too_early' };
+    case 'refuse': return { tone: 'bold', changes: { reputation: -8 }, ending: 'refused' };
+    case 'verify': return { tone: 'careful', changes: { focus: 4, team_trust: 4 }, next: 'decide', reveal: 'check_result', verified: true };
+    case 'shortcut': return { tone: 'bold', changes: { reputation: -4 }, next: 'decide' };
+    case 'hand_off_early': return { tone: 'team', changes: { team_trust: 2 }, ending: 'handed_off_early' };
+    case 'go_ahead': return verified
       ? { tone: 'careful', changes: { reputation: 10, team_trust: 6 }, ending: 'success' }
-      : { tone: 'reckless', changes: { reputation: -12 }, ending: 'unverified_transfer' };
-    case 'decline_transfer': return verified
-      ? { tone: 'bold', changes: { reputation: -6 }, ending: 'declined_verified' }
-      : { tone: 'careful', changes: { reputation: 2 }, ending: 'declined_unverified' };
-    case 'escalate': return verified
-      ? { tone: 'team', changes: { team_trust: 2 }, ending: 'escalated_verified' }
-      : { tone: 'team', changes: { team_trust: 6 }, ending: 'escalated_unverified' };
+      : { tone: 'reckless', changes: { reputation: -12 }, ending: 'acted_unchecked' };
+    case 'hold_off': return verified
+      ? { tone: 'bold', changes: { reputation: -6 }, ending: 'held_after_check' }
+      : { tone: 'careful', changes: { reputation: 2 }, ending: 'held_unchecked' };
+    case 'hand_off': return verified
+      ? { tone: 'team', changes: { team_trust: 2 }, ending: 'handed_off_after_check' }
+      : { tone: 'team', changes: { team_trust: 6 }, ending: 'handed_off_unchecked' };
   }
 }
 
@@ -122,23 +145,23 @@ export function applyChoice(state: PlayState, fill: ScenarioFill, action: Action
     ...base, stage: 'resolution', status: 'completed', endingId: outcome.ending,
     transcript: [...state.transcript, said(action, 'completed', fill.endings[outcome.ending].summary)],
   };
-  const result = outcome.reveal ? fill.evidence[outcome.reveal].text : fill.trust_result;
-  const setup = outcome.next === 'investigate' ? fill.setups.investigate
-    : base.verified ? fill.setups.decide_verified : fill.setups.decide_unverified;
+  const result = outcome.reveal ? fill[outcome.reveal].text : fill.shortcut_result;
+  const setup = outcome.next === 'investigate' ? fill.pressure
+    : base.verified ? fill.after_check.setup : fill.after_shortcut.setup;
   const text = `${firstSentence(result)} ${firstSentence(setup)}`;
   return { ...base, stage: outcome.next!, transcript: [...state.transcript, said(action, 'applied', text)] };
 }
 
 /** Projects a play-through into the existing game view. */
 export function presentPlay(playId: string, fill: ScenarioFill, state: PlayState): GameView {
-  const stage = accountOwnershipBlueprint.stages.find(item => item.id === state.stage)!;
+  const stage = caseBlueprint.stages.find(item => item.id === state.stage)!;
   const question = stageQuestion(fill, state.stage, state.verified);
-  const evidence = state.revealed.map(id => fill.evidence[id].text).join('\n');
+  const evidence = state.revealed.map(id => fill[id].text).join('\n');
   const ending = state.endingId ? { id: state.endingId, result: endingResult[state.endingId], ...fill.endings[state.endingId] } : null;
   return {
     id: playId, version: state.version, status: state.status, title: fill.title, objective: fill.objective,
     location: { id: stage.id, name: question, description: evidence ? `${fill.briefing}\n${evidence}` : fill.briefing },
-    visible_entities: state.revealed.map(id => ({ id, name: fill.evidence[id].text.slice(0, 80), kind: 'clue' })),
+    visible_entities: state.revealed.map(id => ({ id, name: fill[id].text.slice(0, 80), kind: 'clue' })),
     inventory: [], available_actions: legalActions(state).map(id => ({ id, label: choiceLabel(fill, id, state.verified), command: id })),
     stage: question, ending, transcript: state.transcript, stats: state.stats, stat_changes: state.lastChanges,
     turn: state.used.length, turn_budget: 3, choice_tally: state.tally,

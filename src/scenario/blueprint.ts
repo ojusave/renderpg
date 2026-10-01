@@ -1,45 +1,40 @@
-export const blueprintId = 'account_ownership_v4' as const;
+export const blueprintId = 'decision_case_v1' as const;
 
-export const earlyActionIds = ['open_record', 'transfer_now', 'turn_away', 'trace_owner', 'take_word', 'escalate_early'] as const;
-export const decideActionIds = ['transfer_account', 'decline_transfer', 'escalate'] as const;
+export const earlyActionIds = ['look_first', 'act_now', 'refuse', 'verify', 'shortcut', 'hand_off_early'] as const;
+export const decideActionIds = ['go_ahead', 'hold_off', 'hand_off'] as const;
 export const actionIds = [...earlyActionIds, ...decideActionIds] as const;
 
 export type EarlyActionId = (typeof earlyActionIds)[number];
 export type DecideActionId = (typeof decideActionIds)[number];
 export type ActionId = (typeof actionIds)[number];
 export type StageId = 'intake' | 'investigate' | 'decide' | 'resolution';
-export type EvidenceId = 'account_record' | 'owner_trace';
-/** Scene text shown right before a question, so the player knows why each option is tempting. */
-export type SetupId = 'investigate' | 'decide_verified' | 'decide_unverified';
+export type EvidenceId = 'first_look' | 'check_result';
 export type EndingId =
-  | 'transferred_too_early' | 'turned_away' | 'escalated_early'
-  | 'success' | 'unverified_transfer'
-  | 'declined_verified' | 'declined_unverified'
-  | 'escalated_verified' | 'escalated_unverified';
+  | 'acted_too_early' | 'refused' | 'handed_off_early'
+  | 'success' | 'acted_unchecked'
+  | 'held_after_check' | 'held_unchecked'
+  | 'handed_off_after_check' | 'handed_off_unchecked';
 
 export interface StageSlot {
   id: StageId;
-  label: string;
   actions: ActionId[];
 }
 
-/** Authored investigation flow. The model writes the words; it cannot add stages or actions. */
-export const accountOwnershipBlueprint: { id: typeof blueprintId; version: 4; stages: StageSlot[] } = {
+/** Authored decision flow for any Slack case. The model writes the words; it cannot add stages or actions. */
+export const caseBlueprint: { id: typeof blueprintId; stages: StageSlot[] } = {
   id: blueprintId,
-  version: 4,
   stages: [
-    { id: 'intake', label: 'What do you do first?', actions: ['open_record', 'transfer_now', 'turn_away'] },
-    { id: 'investigate', label: 'The customer wants the account moved without a check. What do you do?', actions: ['trace_owner', 'take_word', 'escalate_early'] },
-    { id: 'decide', label: 'What do you do with the account?', actions: ['transfer_account', 'decline_transfer', 'escalate'] },
-    { id: 'resolution', label: 'Resolution', actions: [] },
+    { id: 'intake', actions: ['look_first', 'act_now', 'refuse'] },
+    { id: 'investigate', actions: ['verify', 'shortcut', 'hand_off_early'] },
+    { id: 'decide', actions: ['go_ahead', 'hold_off', 'hand_off'] },
+    { id: 'resolution', actions: [] },
   ],
 };
 
-export const evidenceIds: EvidenceId[] = ['account_record', 'owner_trace'];
-export const setupIds: SetupId[] = ['investigate', 'decide_verified', 'decide_unverified'];
+export const evidenceIds: EvidenceId[] = ['first_look', 'check_result'];
 export const endingIds: EndingId[] = [
-  'transferred_too_early', 'turned_away', 'escalated_early', 'success', 'unverified_transfer',
-  'declined_verified', 'declined_unverified', 'escalated_verified', 'escalated_unverified',
+  'acted_too_early', 'refused', 'handed_off_early', 'success', 'acted_unchecked',
+  'held_after_check', 'held_unchecked', 'handed_off_after_check', 'handed_off_unchecked',
 ];
 
 export const staleFillMs = 15 * 60 * 1000;

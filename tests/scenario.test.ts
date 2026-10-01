@@ -11,7 +11,7 @@ import { buildApp } from '../src/api/app.js';
 import { MemoryRepository } from './helpers.js';
 import { defaultScenarioPrompt } from '../src/scenario/default-prompt.js';
 import { applyChoice, legalActions, openPlay, presentPlay } from '../src/scenario/engine.js';
-import { alignFill, validateFill } from '../src/scenario/fill.js';
+import { validateFill } from '../src/scenario/fill.js';
 import { fillInstructions } from '../src/scenario/fill-schema.js';
 import { offlineFill } from '../src/scenario/offline-fill.js';
 import { MemoryScenarioStore } from './scenario-memory.js';
@@ -21,52 +21,40 @@ import { publishFill } from '../src/application/publish-fill.js';
 
 const secret = 's'.repeat(32);
 
-test('fill validation rejects travel and invented excerpts', () => {
+test('fill validation rejects travel, repeated options, and invented excerpts', () => {
   const fill = offlineFill();
   assert.deepEqual(validateFill(fill, defaultScenarioPrompt), []);
-  fill.decide.verified.transfer_account = 'Travel to the owner office';
+  fill.after_check.go_ahead = 'Travel to the owner office';
   assert.ok(validateFill(fill, defaultScenarioPrompt).some(error => error.includes('unrealistic')));
-  fill.decide.verified.transfer_account = 'Transfer the account';
-  fill.trust_result = 'You transfer the account to Priya.';
-  assert.ok(validateFill(fill, defaultScenarioPrompt).some(error => error.includes('must not move')));
-  fill.trust_result = 'You do not check the explanation.';
-  fill.evidence.account_record.sourceExcerpt = 'A fact that was never in the source.';
+  fill.after_check.go_ahead = fill.after_check.hold_off;
+  assert.ok(validateFill(fill, defaultScenarioPrompt).some(error => error.includes('repeat')));
+  fill.after_check.go_ahead = 'Make them the owner';
+  fill.first_look.sourceExcerpt = 'A fact that was never in the source.';
   assert.ok(validateFill(fill, defaultScenarioPrompt).some(error => error.includes('excerpt')));
+  fill.pressure = 'Speaker B pushes for a quick answer.';
+  assert.ok(validateFill(fill, defaultScenarioPrompt).some(error => error.includes('Speaker')));
 });
 
-test('a skip-the-check option that transfers is rewritten to the action taken', () => {
+test('going ahead succeeds only after the proper check', () => {
   const fill = offlineFill();
-  const name = fill.cast.customer.split(' ')[0];
-  fill.choices.take_word.label = 'Skip the check and transfer it';
-  fill.choices.escalate_early.label = 'Hand it over before opening the record';
-  fill.trust_result = 'You transfer the account to Priya.';
-  const aligned = alignFill(fill);
-  assert.equal(aligned.choices.take_word.label, `Skip the check and use what ${name} said`);
-  assert.equal(aligned.choices.escalate_early.label, 'Hand the case to a Security lead');
-  assert.match(aligned.trust_result, /do not check/i);
-  assert.equal(validateFill(aligned, defaultScenarioPrompt).some(error => error.includes('not a transfer')), false);
-});
-
-test('transfer succeeds only after the owner is traced', () => {
-  const fill = offlineFill();
-  const state = applyChoice(openPlay(fill), fill, 'open_record');
-  const trusted = applyChoice(applyChoice(state, fill, 'take_word'), fill, 'transfer_account');
-  assert.equal(trusted.endingId, 'unverified_transfer');
-  const verified = applyChoice(applyChoice(state, fill, 'trace_owner'), fill, 'transfer_account');
+  const state = applyChoice(openPlay(fill), fill, 'look_first');
+  const trusted = applyChoice(applyChoice(state, fill, 'shortcut'), fill, 'go_ahead');
+  assert.equal(trusted.endingId, 'acted_unchecked');
+  const verified = applyChoice(applyChoice(state, fill, 'verify'), fill, 'go_ahead');
   assert.equal(verified.endingId, 'success');
   assert.equal(verified.status, 'completed');
 });
 
 const expectedEndings: Record<string, string> = {
-  'transfer_now': 'transferred_too_early',
-  'turn_away': 'turned_away',
-  'open_record>escalate_early': 'escalated_early',
-  'open_record>trace_owner>transfer_account': 'success',
-  'open_record>trace_owner>decline_transfer': 'declined_verified',
-  'open_record>trace_owner>escalate': 'escalated_verified',
-  'open_record>take_word>transfer_account': 'unverified_transfer',
-  'open_record>take_word>decline_transfer': 'declined_unverified',
-  'open_record>take_word>escalate': 'escalated_unverified',
+  'act_now': 'acted_too_early',
+  'refuse': 'refused',
+  'look_first>hand_off_early': 'handed_off_early',
+  'look_first>verify>go_ahead': 'success',
+  'look_first>verify>hold_off': 'held_after_check',
+  'look_first>verify>hand_off': 'handed_off_after_check',
+  'look_first>shortcut>go_ahead': 'acted_unchecked',
+  'look_first>shortcut>hold_off': 'held_unchecked',
+  'look_first>shortcut>hand_off': 'handed_off_unchecked',
 };
 
 test('every path ends in the ending written for that exact situation', () => {
@@ -86,39 +74,40 @@ test('every path ends in the ending written for that exact situation', () => {
   assert.deepEqual(reached, expectedEndings);
 });
 
-test('each question is one its three options can answer', () => {
+test('each question shows the options that answer it in that state', () => {
   const fill = offlineFill();
-  const opened = applyChoice(openPlay(fill), fill, 'open_record');
+  const opened = applyChoice(openPlay(fill), fill, 'look_first');
   const checking = presentPlay('x', fill, opened);
-  assert.match(checking.stage, /wants the account moved without a check/);
-  assert.deepEqual(checking.available_actions.map(action => action.id), ['trace_owner', 'take_word', 'escalate_early']);
-  const verified = presentPlay('x', fill, applyChoice(opened, fill, 'trace_owner'));
-  assert.match(verified.stage, /The check shows .+ should own the account/);
-  assert.equal(verified.available_actions[0]!.label, fill.decide.verified.transfer_account);
-  const unverified = presentPlay('x', fill, applyChoice(opened, fill, 'take_word'));
-  assert.match(unverified.stage, /You have not checked who should own the account/);
-  assert.equal(unverified.available_actions[0]!.label, fill.decide.unverified.transfer_account);
-  assert.notEqual(verified.available_actions[0]!.label, unverified.available_actions[0]!.label);
+  assert.equal(checking.stage, fill.investigate.question);
+  assert.deepEqual(checking.available_actions.map(action => action.label), [fill.investigate.verify, fill.investigate.shortcut, fill.investigate.hand_off_early]);
+  const checked = presentPlay('x', fill, applyChoice(opened, fill, 'verify'));
+  assert.equal(checked.stage, fill.after_check.question);
+  assert.equal(checked.available_actions[0]!.label, fill.after_check.go_ahead);
+  const unchecked = presentPlay('x', fill, applyChoice(opened, fill, 'shortcut'));
+  assert.equal(unchecked.stage, fill.after_shortcut.question);
+  assert.equal(unchecked.available_actions[1]!.label, fill.after_shortcut.hold_off);
 });
 
-test('investigation turns show what you found and set up the next question', () => {
+test('each step shows what happened, then the pressure before the next question', () => {
   const fill = offlineFill();
-  const opened = applyChoice(openPlay(fill), fill, 'open_record');
-  assert.equal(opened.transcript.at(-1)!.text, `${fill.evidence.account_record.text} ${fill.setups.investigate}`);
-  const traced = applyChoice(opened, fill, 'trace_owner');
-  assert.equal(traced.transcript.at(-1)!.text, `${fill.evidence.owner_trace.text} ${fill.setups.decide_verified}`);
-  assert.deepEqual(traced.revealed, ['account_record', 'owner_trace']);
-  const trusted = applyChoice(opened, fill, 'take_word');
-  assert.equal(trusted.transcript.at(-1)!.text, `${fill.trust_result} ${fill.setups.decide_unverified}`);
+  const opened = applyChoice(openPlay(fill), fill, 'look_first');
+  assert.equal(opened.transcript.at(-1)!.text, `${fill.first_look.text} ${fill.pressure}`);
+  const checked = applyChoice(opened, fill, 'verify');
+  assert.equal(checked.transcript.at(-1)!.text, `${fill.check_result.text} ${fill.after_check.setup}`);
+  assert.deepEqual(checked.revealed, ['first_look', 'check_result']);
+  const trusted = applyChoice(opened, fill, 'shortcut');
+  assert.equal(trusted.transcript.at(-1)!.text, `${fill.shortcut_result} ${fill.after_shortcut.setup}`);
 });
 
-test('game master text is at most two sentences', () => {
+test('game master text is at most two sentences and keeps abbreviations whole', () => {
   const fill = offlineFill();
-  fill.evidence.account_record.text = 'One. Two. Three.';
-  fill.setups.investigate = 'Four. Five.';
-  const state = applyChoice(openPlay(fill), fill, 'open_record');
-  const text = state.transcript.at(-1)!.text;
-  assert.ok((text.match(/[.!?](\s|$)/g) ?? []).length <= 2, text);
+  fill.first_look.text = 'It was deleted at 2:14 a.m. by a teammate. Two. Three.';
+  fill.pressure = 'Four. Five.';
+  const state = applyChoice(openPlay(fill), fill, 'look_first');
+  assert.equal(state.transcript.at(-1)!.text, 'It was deleted at 2:14 a.m. by a teammate. Four.');
+  fill.pressure = 'Sam writes back: "The clinics open soon. Please hurry." Then Sam calls.';
+  const quoted = applyChoice(openPlay(fill), fill, 'look_first');
+  assert.match(quoted.transcript.at(-1)!.text, /"The clinics open soon\. Please hurry\."$/);
 });
 
 test('sign-in claims a ready scenario and begin does not fill another', async () => {
@@ -136,9 +125,9 @@ test('sign-in claims a ready scenario and begin does not fill another', async ()
   const game = await service.begin(session.session_token);
   assert.equal(game.location.id, 'intake');
   assert.equal(game.available_actions.length, 3);
-  const verified = await service.choose(session.session_token, randomUUID(), 'open_record', game.version);
-  const decided = await service.choose(session.session_token, randomUUID(), 'trace_owner', verified.version);
-  const ended = await service.choose(session.session_token, randomUUID(), 'transfer_account', decided.version);
+  const verified = await service.choose(session.session_token, randomUUID(), 'look_first', game.version);
+  const decided = await service.choose(session.session_token, randomUUID(), 'verify', verified.version);
+  const ended = await service.choose(session.session_token, randomUUID(), 'go_ahead', decided.version);
   assert.equal(ended.status, 'completed');
   assert.equal(ended.ending?.id, 'success');
   assert.equal(fills, fillsAfterClaim);
@@ -240,7 +229,7 @@ test('an empty pool fills one scenario during sign-in', async () => {
   const session = await service.signIn();
   assert.equal(session.status, 'ready');
   const game = await service.begin(session.session_token);
-  assert.match(game.transcript[0]!.text, /rightful new owner/i);
+  assert.match(game.transcript[0]!.text, /Can you make me the owner\?/);
 });
 
 test('the same prompt can produce more than one telling', () => {
@@ -283,21 +272,21 @@ test('one version accepts one choice, replays its key, and a finished case stays
   const game = await service.begin(session.session_token);
   const key = randomUUID();
   const duplicates = await Promise.all([
-    service.choose(session.session_token, key, 'open_record', game.version),
-    service.choose(session.session_token, key, 'open_record', game.version),
+    service.choose(session.session_token, key, 'look_first', game.version),
+    service.choose(session.session_token, key, 'look_first', game.version),
   ]);
   assert.deepEqual(duplicates[0], duplicates[1]);
   assert.equal(duplicates[0]!.version, 1);
-  await assert.rejects(service.choose(session.session_token, key, 'trace_owner', game.version), { code: 'idempotency_conflict' });
+  await assert.rejects(service.choose(session.session_token, key, 'verify', game.version), { code: 'idempotency_conflict' });
   const races = await Promise.allSettled([
-    service.choose(session.session_token, randomUUID(), 'trace_owner', duplicates[0]!.version),
-    service.choose(session.session_token, randomUUID(), 'take_word', duplicates[0]!.version),
+    service.choose(session.session_token, randomUUID(), 'verify', duplicates[0]!.version),
+    service.choose(session.session_token, randomUUID(), 'shortcut', duplicates[0]!.version),
   ]);
   assert.equal(races.filter(race => race.status === 'fulfilled').length, 1);
   assert.equal(races.filter(race => race.status === 'rejected').length, 1);
-  const ended = await service.choose(session.session_token, randomUUID(), 'escalate', (await service.current(session.session_token)).game!.version);
+  const ended = await service.choose(session.session_token, randomUUID(), 'hand_off', (await service.current(session.session_token)).game!.version);
   assert.equal(ended.status, 'completed');
-  await assert.rejects(service.choose(session.session_token, randomUUID(), 'escalate', ended.version), { code: 'game_finished' });
+  await assert.rejects(service.choose(session.session_token, randomUUID(), 'hand_off', ended.version), { code: 'game_finished' });
   await service.end(session.session_token);
   await assert.rejects(service.current(session.session_token), { code: 'unauthorized' });
 });

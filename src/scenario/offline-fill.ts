@@ -4,68 +4,55 @@ import type { ScenarioFill } from './fill.js';
 
 const excerpt = defaultScenarioPrompt.split('. ')[0] + '.';
 const casts = [
-  { customer: 'Priya Shah', company: 'Northwind Labs', former_employee: 'Marcus Lee', hurry: 'her team cannot deploy until someone owns it again' },
-  { customer: 'Daniel Okafor', company: 'Bluefin Health', former_employee: 'Sara Kim', hurry: 'a customer demo starts tomorrow morning' },
-  { customer: 'Elena Ruiz', company: 'Cobalt Freight', former_employee: 'Tom Becker', hurry: 'an unpaid invoice will suspend the account this week' },
-  { customer: 'Wei Zhang', company: 'Harbor Analytics', former_employee: 'Jess Morgan', hurry: 'the team is locked out of its production logs' },
+  { requester: 'Priya Shah', organization: 'Northwind Labs', former: 'Marcus', hurry: 'Our launch is Friday' },
+  { requester: 'Daniel Okafor', organization: 'Bluefin Health', former: 'Sara', hurry: 'We have a customer demo tomorrow morning' },
+  { requester: 'Elena Ruiz', organization: 'Cobalt Freight', former: 'Tom', hurry: 'Our card expires this week' },
+  { requester: 'Wei Zhang', organization: 'Harbor Analytics', former: 'Jess', hurry: 'We are locked out of our production logs' },
 ];
 
-/** Deterministic slot fill for tests and local play. The seed changes the telling, not the facts. */
+/** Deterministic fill for tests and local play, written the way the model is asked to write. */
 export function offlineFill(prompt = defaultScenarioPrompt, variationSeed = 'offline'): ScenarioFill {
   const sourceExcerpt = prompt.includes(excerpt) ? excerpt : prompt.slice(0, 120);
   const cast = casts[createHash('sha256').update(variationSeed).digest()[0]! % casts.length]!;
-  const { customer, company, former_employee: former } = cast;
-  const first = customer.split(' ')[0]!;
+  const { requester, organization, former } = cast;
+  const name = requester.split(' ')[0]!;
   return {
-    cast: { customer, company, former_employee: former },
-    title: `${company}'s orphaned account`,
-    objective: 'Identify the rightful new owner before you transfer the account.',
-    briefing: `${customer} from ${company} contacts Security because the account the team relies on is still tied to ${former}'s email address, and ${former} left the company. ${first} needs it back fast, because ${cast.hurry}.`,
-    choices: {
-      open_record: { label: `Pull up the account record first` },
-      transfer_now: { label: `Give ${first} the account so the team is unblocked` },
-      turn_away: { label: `Tell ${first} the account left with ${former}` },
-      trace_owner: { label: `Check whether ${first} should own it` },
-      take_word: { label: `Skip the check and use what ${first} said` },
-      escalate_early: { label: `Hand the case to a Security lead` },
+    plan: {
+      request: `make ${name} the account owner`, stakes: cast.hurry.toLowerCase(),
+      proper_check: `confirm with someone at ${organization} who has authority`,
+      shortcut: `${former}'s forwarded goodbye email`, check_shows: `${organization}'s CTO confirms ${name} took over`,
     },
-    decide: {
-      verified: {
-        transfer_account: `Transfer the account to ${first}`,
-        decline_transfer: `Leave the account where it is`,
-        escalate: `Ask a Security lead to approve the transfer`,
-      },
-      unverified: {
-        transfer_account: `Transfer it to ${first} on their word`,
-        decline_transfer: `Leave it until someone checks`,
-        escalate: `Ask a Security lead to decide`,
-      },
+    cast: { requester, organization },
+    title: `Locked out after ${former} left`,
+    objective: `Make sure ${name} should own the account before you hand it over.`,
+    briefing: `${requester} from ${organization} writes in: their Render account is owned by ${former}, who left last month, and nobody else can change billing or deploys. "${cast.hurry}. Can you make me the owner?"`,
+    first: { look_first: `Look up ${organization}'s account`, act_now: `Make ${name} the owner now`, refuse: `Tell ${name} the owner can't change` },
+    first_look: { text: `The account has one owner, ${former}, whose work email now bounces, and ${name} is a regular member.`, sourceExcerpt },
+    pressure: `${name} forwards ${former}'s goodbye email, which names ${name} as the replacement.`,
+    investigate: {
+      question: `How do you confirm ${name} should take over?`,
+      verify: `Ask someone at ${organization} with authority`, shortcut: 'Go by the forwarded email', hand_off_early: 'Pass it to a Security lead',
     },
-    questions: {
-      investigate: `${first} wants the account moved without a check. What do you do?`,
-      decide_verified: `The check shows ${first} should own the account. What do you do with it?`,
-      decide_unverified: 'You have not checked who should own the account. What do you do with it?',
+    check_result: { text: `${organization}'s CTO replies from a company address: ${name} took over ${former}'s work.`, sourceExcerpt },
+    after_check: {
+      setup: `${name} is waiting to hear back.`, question: 'What do you do now?',
+      go_ahead: `Make ${name} the owner`, hold_off: 'Wait a little longer', hand_off: 'Ask a Security lead to sign off',
     },
-    evidence: {
-      account_record: { text: `The record lists ${former} as the only owner, so the account left the company with ${former}.`, sourceExcerpt },
-      owner_trace: { text: `You find that ${first}'s team took over ${former}'s projects, which makes ${first} the rightful new owner.`, sourceExcerpt },
-    },
-    trust_result: `You do not check ${first}'s explanation.`,
-    setups: {
-      investigate: `${first} says the team took over ${former}'s work and asks you to skip the check.`,
-      decide_verified: `The check stands and ${first} is waiting, though a Security lead would only add delay.`,
-      decide_unverified: `The account is still in ${former}'s name, and ${first} wants an answer today.`,
+    shortcut_result: 'You go by the forwarded email, which looks right but anyone could paste.',
+    after_shortcut: {
+      setup: `${name} wants an answer today.`, question: 'What do you do now?',
+      go_ahead: `Make ${name} the owner anyway`, hold_off: `Ask ${organization} to confirm first`, hand_off: 'Pass it to a Security lead',
     },
     endings: {
-      transferred_too_early: { title: 'Handed over unchecked', summary: `You gave ${first} the account before checking anything, so you could not know it reached the right person.` },
-      turned_away: { title: `${first} turned away`, summary: `You told ${first} the account was gone, so the rightful owner stays locked out of ${company}'s account.` },
-      escalated_early: { title: 'Escalated midway', summary: `You read the record but escalated before investigating, so a Security lead has to work out who owns it.` },
-      success: { title: 'Rightful owner restored', summary: `Because you confirmed ${first}'s team took over ${former}'s work, the account went to the right person and ${company} is unblocked.` },
-      unverified_transfer: { title: 'Transferred on trust', summary: `You moved ${company}'s account on ${first}'s word alone, so it could have gone to the wrong person.` },
-      declined_verified: { title: 'Owner left locked out', summary: `Your investigation confirmed ${first}, yet you declined, so the rightful owner is still locked out.` },
-      declined_unverified: { title: 'Declined without proof', summary: `You declined because ownership was never verified, which is safe but leaves ${first} waiting.` },
-      escalated_verified: { title: 'Escalated a solved case', summary: `You had already confirmed ${first}, so escalating only delayed a transfer you could have made.` },
-      escalated_unverified: { title: 'Handed off for review', summary: `You escalated because nothing was verified, which gives a Security lead a fair starting point.` },
+      acted_too_early: { title: 'Handed over blind', summary: `You made ${name} the owner without checking. It worked out, but nothing told you it was safe.` },
+      refused: { title: `${name} left stuck`, summary: `You told ${name} the owner couldn't change, so ${organization} stays locked out of its own account.` },
+      handed_off_early: { title: 'Passed on too soon', summary: `You handed it to a lead after one look, so they do the check you could have done.` },
+      success: { title: 'Right person, right reason', summary: `You checked with ${organization} before acting, so ${name} got the account and the right person made the call.` },
+      acted_unchecked: { title: 'Trusted a paste', summary: `You went by a forwarded email. It turned out fine, but it could have been the wrong call.` },
+      held_after_check: { title: 'Stuck for no reason', summary: `${organization} had already confirmed ${name}, yet you held off, so ${name} is still locked out.` },
+      held_unchecked: { title: 'Safe but slower', summary: `You asked ${organization} to confirm before acting. ${name} waits a bit longer, and nothing goes to the wrong person.` },
+      handed_off_after_check: { title: 'An extra sign-off', summary: `You already had ${organization}'s confirmation, so the lead's sign-off only added a delay.` },
+      handed_off_unchecked: { title: 'A fair handoff', summary: `Nothing was confirmed yet, so handing it to a lead was reasonable.` },
     },
   };
 }

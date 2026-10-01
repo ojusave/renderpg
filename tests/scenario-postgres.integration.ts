@@ -39,13 +39,13 @@ test('real Postgres: scenario choices commit once and an expired fill stays fail
   const game = await first.begin(session.session_token);
   const key = randomUUID();
   const duplicates = await Promise.all([
-    first.choose(session.session_token, key, 'open_record', game.version),
-    second.choose(session.session_token, key, 'open_record', game.version),
+    first.choose(session.session_token, key, 'look_first', game.version),
+    second.choose(session.session_token, key, 'look_first', game.version),
   ]);
   assert.deepEqual(duplicates[0], duplicates[1]);
   assert.equal(duplicates[0]!.version, 1);
   const races = await Promise.allSettled([
-    first.choose(session.session_token, randomUUID(), 'trace_owner', 1),
+    first.choose(session.session_token, randomUUID(), 'verify', 1),
     second.choose(session.session_token, randomUUID(), 'take_word', 1),
   ]);
   assert.equal(races.filter(race => race.status === 'fulfilled').length, 1);

@@ -1,6 +1,6 @@
 import { FILL_MAX_TOKENS, finishedWriting, runningProgress, savingProgress, validatingProgress, writingProgress, type FillProgress, type WritingSample } from './fill-progress.js';
 import type { ScenarioAuthor, ScenarioStore } from './scenario-ports.js';
-import { alignFill, validateFill } from '../scenario/fill.js';
+import { validateFill } from '../scenario/fill.js';
 
 /** Validates one model fill and stores it, recording each real checkpoint. */
 export async function publishFill(store: ScenarioStore, author: ScenarioAuthor, scenarioId: string, prompt: string): Promise<void> {
@@ -26,7 +26,6 @@ export async function publishFill(store: ScenarioStore, author: ScenarioAuthor, 
     });
     await report(finishedWriting(sample ?? { outputTokens: null, maxTokens: FILL_MAX_TOKENS, characters: null }));
     await report(validatingProgress(current));
-    fill = alignFill(fill);
     const errors = validateFill(fill, prompt);
     if (errors.length) throw new Error(errors.join('; '));
   } catch (error) {
