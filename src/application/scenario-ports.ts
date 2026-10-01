@@ -49,7 +49,7 @@ export interface ScenarioPromptSource {
 
 /** Fills blueprint text slots. It does not choose stages or outcomes. */
 export interface ScenarioAuthor {
-  fill(prompt: string): Promise<ScenarioFill>;
+  fill(prompt: string, variationSeed: string): Promise<ScenarioFill>;
 }
 
 /** Starts a durable fill. Inline implementations finish before returning. */

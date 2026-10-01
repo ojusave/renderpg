@@ -1,24 +1,32 @@
+import { createHash } from 'node:crypto';
 import { defaultScenarioPrompt } from './default-prompt.js';
 import type { ScenarioFill } from './fill.js';
 
 const excerpt = defaultScenarioPrompt.split('. ')[0] + '.';
+const tellings = [
+  { title: 'Rightful account owner', briefing: 'Security received a request to transfer an account after the employee who owned it left the company. Confirm the record and the requester’s authority before any transfer.', review: 'Review the account record' },
+  { title: 'Customer account request', briefing: 'A customer asked Security to name the rightful new owner after the former employee left. Check the account record before you record a transfer.', review: 'Read the account record' },
+  { title: 'Account tied to a former employee', briefing: 'The account was tied to an employee who left, so the record and the requester both need review. Establish authority before the transfer is recorded.', review: 'Examine the account record' },
+  { title: 'Authority before transfer', briefing: 'This case starts with a customer request and an account that left with a former employee. Review the history, then decide whether authority is clear.', review: 'Inspect the account record' },
+];
 
-/** Deterministic slot fill for tests and local play. It quotes the source story. */
-export function offlineFill(prompt = defaultScenarioPrompt): ScenarioFill {
+/** Deterministic slot fill for tests and local play. The seed changes the telling, not the facts. */
+export function offlineFill(prompt = defaultScenarioPrompt, variationSeed = 'offline'): ScenarioFill {
   const sourceExcerpt = prompt.includes(excerpt) ? excerpt : prompt.slice(0, 120);
+  const telling = tellings[createHash('sha256').update(variationSeed).digest()[0]! % tellings.length]!;
   const evidence = (text: string) => ({ text, sourceExcerpt });
   const choice = (label: string, consequence: string) => ({ label, consequence });
   return {
-    title: 'Rightful account owner',
+    title: telling.title,
     objective: 'Identify the rightful new owner before transferring the account.',
-    briefing: 'Security received a request to transfer an account after the employee who owned it left the company. Confirm the record and the requester’s authority before any transfer.',
+    briefing: telling.briefing,
     evidence: {
       account_record: evidence('The account record shows the former employee as the owner because the account was tied to that employee’s email address.'),
       ownership_history: evidence('The ownership history confirms the account effectively left with the former employee.'),
       requester_authority: evidence('The customer contacted Security and can be confirmed as the rightful new owner only after the record is checked.'),
     },
     choices: {
-      review_account_record: choice('Review the account record', 'You review the account record before considering a transfer.'),
+      review_account_record: choice(telling.review, 'You review the account record before considering a transfer.'),
       check_ownership_history: choice('Check the ownership history', 'You check how ownership changed when the employee left.'),
       verify_requester_authority: choice('Verify the requester’s authority', 'You confirm the requester’s authority against the account record.'),
       request_more_evidence: choice('Request more evidence', 'You ask for evidence instead of transferring the account on the request alone.'),

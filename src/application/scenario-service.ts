@@ -29,12 +29,25 @@ export class ScenarioService {
     return { status, session_token: token, run_id: runId, message, game };
   }
 
+  /** Claims a ready case, or one already being written, before starting another fill. */
+  private async claimSoon(sessionId: string) {
+    const ready = await this.store.claimReady(sessionId, blueprintId);
+    if (ready || await this.store.poolDepth(blueprintId) === 0) return ready;
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+      const found = await this.store.claimReady(sessionId, blueprintId);
+      if (found || await this.store.poolDepth(blueprintId) === 0) return found;
+    }
+    return null;
+  }
+
   /** Creates a session and assigns a ready scenario, or starts a fill. */
   async signIn(): Promise<SessionView> {
     const id = randomUUID();
     const token = randomBytes(32).toString('base64url');
     await this.store.createSession(id, this.hash(token));
-    const claimed = await this.store.claimReady(id, blueprintId);
+    const claimed = await this.claimSoon(id);
     if (claimed) {
       await this.store.setSessionScenario(id, claimed.id);
       this.kickPool();

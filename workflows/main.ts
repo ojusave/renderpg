@@ -1,9 +1,8 @@
 import { task, type TaskContext } from '@renderinc/sdk/workflows';
 import { AnthropicAI } from '../src/adapters/anthropic-ai.js';
-import { AnthropicAuthor } from '../src/adapters/anthropic-author.js';
 import { OfflineAI } from '../src/adapters/offline-ai.js';
-import { OfflineAuthor } from '../src/adapters/offline-author.js';
 import { PostgresRepository } from '../src/adapters/postgres.js';
+import { createScenarioAuthor } from '../src/composition/author.js';
 import { PostgresScenarioStore } from '../src/adapters/scenario-postgres.js';
 import { compileAndPublish } from '../src/application/compile-game.js';
 import { publishFill } from '../src/application/publish-fill.js';
@@ -24,7 +23,7 @@ const ai = mode === 'offline'
   : new AnthropicAI(required('ANTHROPIC_API_KEY'), required('ANTHROPIC_MODEL'), timeout);
 const repo = new PostgresRepository(required('DATABASE_URL'));
 const scenarioStore = new PostgresScenarioStore(required('DATABASE_URL'));
-const author = mode === 'offline' ? new OfflineAuthor() : new AnthropicAuthor(required('ANTHROPIC_API_KEY'), required('ANTHROPIC_MODEL'), timeout);
+const author = createScenarioAuthor(process.env.WORKFLOW_AI_MODE ?? process.env.SCENARIO_PROVIDER ?? mode);
 const report = (event: string) => console.warn(JSON.stringify({ event }));
 
 task({ name: 'compileAdventure', retry: { maxRetries: 2, waitDurationMs: 1000 } },

@@ -4,14 +4,25 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
+import { OfflineAuthor } from '../src/adapters/offline-author.js';
+import { InlineFillRunner } from '../src/adapters/inline-fill-runner.js';
 import { GameService } from '../src/application/game-service.js';
+import { ScenarioService } from '../src/application/scenario-service.js';
 import { OfflineAI } from '../src/adapters/offline-ai.js';
 import { buildApp } from '../src/api/app.js';
 import { MemoryRepository } from './helpers.js';
+import { MemoryScenarioStore } from './scenario-memory.js';
+
+function playableApp() {
+  const repo = new MemoryRepository();
+  const store = new MemoryScenarioStore();
+  const author = new OfflineAuthor();
+  const scenarios = new ScenarioService(store, author, new InlineFillRunner(store, author), 's'.repeat(32));
+  return { repo, store, app: buildApp(new GameService(repo, new OfflineAI(), 's'.repeat(32)), repo, false, scenarios) };
+}
 
 test('real console clears an oversized rejected command and accepts the next turn', { timeout: 15000 }, async () => {
-  const repo = new MemoryRepository();
-  const app = buildApp(new GameService(repo, new OfflineAI(), 's'.repeat(32)), repo);
+  const { app } = playableApp();
   const url = await app.listen({ host: '127.0.0.1', port: 0 });
   const directory = await mkdtemp(path.join(tmpdir(), 'renderpg-console-'));
   const child = spawn(process.execPath, [path.resolve('node_modules/tsx/dist/cli.mjs'), path.resolve('src/console/main.ts')], {
@@ -38,7 +49,7 @@ test('real console clears an oversized rejected command and accepts the next tur
     const session = JSON.parse(await readFile(path.join(directory, '.console-session.json'), 'utf8'));
     assert.equal(session.pending, undefined, '413 must release the rejected request');
     const next = output.length;
-    child.stdin.write('look\n');
+    child.stdin.write('1\n');
     await waitFor('turn 1]', next);
     assert.ok(!output.slice(next).includes('A request is unresolved'));
     child.stdin.write('/quit\n');
@@ -75,8 +86,7 @@ function launchConsole(directory: string, url: string) {
 
 for (const exit of ['SIGINT', 'EOF'] as const) {
   test(`console exits cleanly on ${exit} and resumes the same game`, { timeout: 15000 }, async () => {
-    const repo = new MemoryRepository();
-    const app = buildApp(new GameService(repo, new OfflineAI(), 's'.repeat(32)), repo);
+    const { app } = playableApp();
     const url = await app.listen({ host: '127.0.0.1', port: 0 });
     const directory = await mkdtemp(path.join(tmpdir(), 'renderpg-exit-'));
     const consoles: ReturnType<typeof launchConsole>[] = [];
@@ -93,7 +103,6 @@ for (const exit of ['SIGINT', 'EOF'] as const) {
       consoles.push(resumed);
       await resumed.waitFor('\n> ');
       assert.match(resumed.output(), /Status: active/);
-      assert.equal(repo.games.size, 1);
       resumed.child.stdin.write('/quit\n');
       assert.deepEqual(await resumed.exited, { code: 0, signal: null });
     } finally {
@@ -108,14 +117,13 @@ for (const exit of ['SIGINT', 'EOF'] as const) {
 }
 
 test('interrupted HTTP response preserves its request and replays without advancing twice', { timeout: 15000 }, async () => {
-  const repo = new MemoryRepository();
-  const app = buildApp(new GameService(repo, new OfflineAI(), 's'.repeat(32)), repo);
+  const { app, store } = playableApp();
   let release!: () => void;
   let observed!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
   const sent = new Promise<void>(resolve => { observed = resolve; });
   app.addHook('onSend', async (request, _reply, payload) => {
-    if (request.url.endsWith('/turns')) { observed(); await held; }
+    if (request.url.endsWith('/choices')) { observed(); await held; }
     return payload;
   });
   const url = await app.listen({ host: '127.0.0.1', port: 0 });
@@ -125,24 +133,25 @@ test('interrupted HTTP response preserves its request and replays without advanc
     const first = launchConsole(directory, url);
     consoles.push(first);
     await first.waitFor('\n> ');
-    first.child.stdin.write('go\n');
+    first.child.stdin.write('1\n');
     await sent;
     first.child.kill('SIGINT');
     assert.deepEqual(await first.exited, { code: 0, signal: null });
     assert.doesNotMatch(first.output(), /AbortError|ABORT_ERR|node:internal/);
     const saved = JSON.parse(await readFile(path.join(directory, '.console-session.json'), 'utf8'));
     assert.ok(saved.pending?.key, 'ambiguous HTTP outcome must keep its idempotency key');
-    assert.equal((await repo.get(saved.gameId))!.version, 1);
+    const play = () => [...store.sessions.values()].map(item => item.play).find(item => item);
+    assert.equal(play()?.version, 1);
     release();
     const resumed = launchConsole(directory, url);
     consoles.push(resumed);
     await resumed.waitFor('\n> ');
-    assert.match(resumed.output(), /What do you want to go/);
-    assert.equal((await repo.get(saved.gameId))!.version, 1, 'replaying must not add a second turn');
+    assert.match(resumed.output(), /You review the account record/);
+    assert.equal(play()?.version, 1, 'replaying must not add a second turn');
     const from = resumed.output().length;
-    resumed.child.stdin.write('dashboard\n');
+    resumed.child.stdin.write('2\n');
     await resumed.waitFor('turn 2]', from);
-    assert.match(resumed.output().slice(from), /Dashboard|Observatory/);
+    assert.equal(play()?.version, 2);
     resumed.child.stdin.write('/quit\n');
     assert.deepEqual(await resumed.exited, { code: 0, signal: null });
     assert.equal(JSON.parse(await readFile(path.join(directory, '.console-session.json'), 'utf8')).pending, undefined);

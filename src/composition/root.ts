@@ -31,5 +31,5 @@ export function composeApplication() {
     : new InlineAdventureRunner(repo, ai, report);
   const service = new GameService(repo, ai, required('SESSION_SECRET'), report, runner);
   const scenario = composeScenario();
-  return { app: buildApp(service, repo, true, scenario.service), repo, scenarioStore: scenario.store, prompts: scenario.prompts, mode };
+  return { app: buildApp(service, repo, true, scenario.service), repo, scenarioStore: scenario.store, prompts: scenario.prompts, scenarios: scenario.service, mode };
 }

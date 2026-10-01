@@ -4,7 +4,7 @@ import { validateFill } from '../scenario/fill.js';
 /** Validates one model fill and stores it. A failed fill leaves no playable scenario. */
 export async function publishFill(store: ScenarioStore, author: ScenarioAuthor, scenarioId: string, prompt: string): Promise<void> {
   try {
-    const fill = await author.fill(prompt);
+    const fill = await author.fill(prompt, scenarioId);
     const errors = validateFill(fill, prompt);
     if (errors.length) throw new Error(errors.join('; '));
     await store.markReady(scenarioId, fill);

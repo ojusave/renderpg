@@ -11,7 +11,8 @@ import { validateFill } from '../src/scenario/fill.js';
 import { offlineFill } from '../src/scenario/offline-fill.js';
 import { MemoryScenarioStore } from './scenario-memory.js';
 import { reservePoolFills } from '../src/application/reserve-pool.js';
-import { poolTarget } from '../src/scenario/blueprint.js';
+import { blueprintId, poolTarget } from '../src/scenario/blueprint.js';
+import { publishFill } from '../src/application/publish-fill.js';
 
 const secret = 's'.repeat(32);
 
@@ -137,4 +138,36 @@ test('an empty pool fills one scenario during sign-in', async () => {
   assert.equal(session.status, 'ready');
   const game = await service.begin(session.session_token);
   assert.match(game.transcript[0]!.text, /rightful new owner/i);
+});
+
+test('the same prompt can produce more than one telling', () => {
+  const seeds = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel'];
+  const briefings = new Set(seeds.map(seed => offlineFill(defaultScenarioPrompt, seed).briefing));
+  assert.ok(briefings.size > 1);
+  for (const seed of seeds) assert.deepEqual(validateFill(offlineFill(defaultScenarioPrompt, seed), defaultScenarioPrompt), []);
+});
+
+test('a fill stores the scenario id as its variation seed', async () => {
+  const store = new MemoryScenarioStore();
+  const scenarioId = randomUUID();
+  let seen = '';
+  await store.insertFilling(scenarioId, blueprintId, defaultScenarioPrompt, null);
+  await publishFill(store, { async fill(_prompt: string, variationSeed: string) { seen = variationSeed; return offlineFill(); } }, scenarioId, defaultScenarioPrompt);
+  assert.equal(seen, scenarioId);
+  assert.equal((await store.scenario(scenarioId))?.status, 'ready');
+});
+
+test('sign-in claims an in-flight pool fill instead of starting another', async () => {
+  const store = new MemoryScenarioStore();
+  let fills = 0;
+  const author = { async fill() { fills += 1; return offlineFill(); } };
+  const runner = { background: true, async start() { fills += 1; return { runId: randomUUID() }; } };
+  const service = new ScenarioService(store, author, runner, secret, null, { background: true, async schedule() {} });
+  const scenarioId = randomUUID();
+  await store.insertFilling(scenarioId, blueprintId, defaultScenarioPrompt, null);
+  setTimeout(() => { void store.markReady(scenarioId, offlineFill()); }, 40);
+  const session = await service.signIn();
+  assert.equal(session.status, 'ready');
+  assert.equal(fills, 0);
+  assert.equal((await store.scenario(scenarioId))?.status, 'claimed');
 });

@@ -15,13 +15,13 @@ Requires Node 24, npm, Postgres, and an Anthropic API key for live AI mode.
 2. Configure `DATABASE_URL`, a 32-character `SESSION_SECRET`, `ANTHROPIC_API_KEY`, and a structured-output-capable `ANTHROPIC_MODEL`.
 3. Run `docker compose up -d --wait` if using the included local Postgres, then `npm run db:migrate`.
 4. Run `npm run dev`.
-5. In another terminal, run `npm run console`. Every new game uses the first Slack story: a customer account that left with a former employee. Set `SCENARIO_PROMPT` only to override that story.
+5. In another terminal, run `npm run console`. Sign-in claims a case prepared from the Slack story, or from the built-in account-ownership story when no transcript is ready. `/new` claims another telling of that same source. Set `SCENARIO_PROMPT` to override the source. Set `SCENARIO_PROVIDER=openrouter` with `OPENROUTER_API_KEY` when fills should use the fastest available provider.
 
 To exercise the backend without Claude, start it with `AI_MODE=offline`. Offline mode uses a deterministic generated fixture and never silently substitutes for a failed live provider.
 
 ## Play
 
-`/new` generates another variation from the configured prompt, `/resume` refreshes, `/retry` safely replays an uncertain request, and `/quit` exits.
+`/new` claims another prepared telling, `/resume` refreshes, `/retry` safely replays an uncertain request, and `/quit` exits. Reply with the number of a listed choice. A warm pool opens immediately. A cold pool waits once while that telling is written, then the next sign-in claims a case that was prepared in the background.
 
 Literal commands are derived from each generated graph. `look`, `help`, and `inventory` are always available. With Claude enabled, natural-language requests are mapped only to generated verbs and visible targets.
 
