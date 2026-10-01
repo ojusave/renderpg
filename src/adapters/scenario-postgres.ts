@@ -19,7 +19,7 @@ export class PostgresScenarioStore implements ScenarioStore {
   private readonly ownsPool: boolean;
   constructor(private connectionString: string, pool?: pg.Pool) {
     this.ownsPool = !pool;
-    this.pool = pool ?? new pg.Pool({ connectionString, max: 10, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 });
+    this.pool = pool ?? new pg.Pool({ connectionString, max: 20, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 });
   }
   private row(record: ScenarioRecord): ScenarioRow {
     return {
@@ -92,25 +92,23 @@ export class PostgresScenarioStore implements ScenarioStore {
       throw error;
     } finally { client.release(); }
   }
-  async claimReady(sessionId: string, blueprintId: string): Promise<ScenarioRow | null> {
+  async claimReady(sessionId: string, blueprintId: string) { return this.claimOpen(sessionId, blueprintId, 'ready'); }
+  async claimFilling(sessionId: string, blueprintId: string) { return this.claimOpen(sessionId, blueprintId, 'filling'); }
+  private async claimOpen(sessionId: string, blueprintId: string, status: 'ready' | 'filling'): Promise<ScenarioRow | null> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      const claimed = (await client.query(`UPDATE filled_scenarios SET status='claimed', session_id=$1, updated_at=now()
-        WHERE id = (SELECT id FROM filled_scenarios WHERE status='ready' AND session_id IS NULL AND blueprint_id=$2
-        ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`, [sessionId, blueprintId])).rows[0];
-      await client.query('COMMIT');
-      return claimed ? this.row(claimed) : null;
-    } catch (error) { await client.query('ROLLBACK'); throw error; }
-    finally { client.release(); }
-  }
-  async claimFilling(sessionId: string, blueprintId: string): Promise<ScenarioRow | null> {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      const claimed = (await client.query(`UPDATE filled_scenarios SET session_id=$1, updated_at=now()
-        WHERE id = (SELECT id FROM filled_scenarios WHERE status='filling' AND session_id IS NULL AND blueprint_id=$2
-        ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`, [sessionId, blueprintId])).rows[0];
+      const session = (await client.query('SELECT scenario_id FROM player_sessions WHERE id=$1 FOR UPDATE', [sessionId])).rows[0];
+      if (session?.scenario_id) {
+        const existing = (await client.query('SELECT * FROM filled_scenarios WHERE id=$1', [session.scenario_id])).rows[0];
+        await client.query('COMMIT');
+        return existing ? this.row(existing) : null;
+      }
+      const claimed = (await client.query(`UPDATE filled_scenarios SET session_id=$1, updated_at=now(),
+        status=CASE WHEN $3='ready' THEN 'claimed' ELSE status END
+        WHERE id=(SELECT id FROM filled_scenarios WHERE status=$3 AND session_id IS NULL AND blueprint_id=$2
+        ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`, [sessionId, blueprintId, status])).rows[0];
+      if (claimed) await client.query('UPDATE player_sessions SET scenario_id=$2 WHERE id=$1 AND scenario_id IS NULL', [sessionId, claimed.id]);
       await client.query('COMMIT');
       return claimed ? this.row(claimed) : null;
     } catch (error) { await client.query('ROLLBACK'); throw error; }

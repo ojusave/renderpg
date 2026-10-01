@@ -54,19 +54,19 @@ export class MemoryScenarioStore implements ScenarioStore {
     for (const key of [...this.choices.keys()]) if (key.startsWith(`${sessionId}:`)) this.choices.delete(key);
     for (const row of this.scenarios.values()) if (row.sessionId === sessionId) row.sessionId = null;
   }
-  async claimReady(sessionId: string, blueprintId: string) {
-    const ready = [...this.scenarios.values()].find(row => row.status === 'ready' && row.sessionId === null && row.blueprintId === blueprintId);
-    if (!ready) return null;
-    ready.status = 'claimed';
-    ready.sessionId = sessionId;
-    return structuredClone(ready);
+  private claimOpen(sessionId: string, blueprintId: string, status: 'ready' | 'filling') {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    if (session.scenarioId) return structuredClone(this.scenarios.get(session.scenarioId) ?? null);
+    const found = [...this.scenarios.values()].find(row => row.status === status && row.sessionId === null && row.blueprintId === blueprintId);
+    if (!found) return null;
+    found.sessionId = sessionId;
+    if (status === 'ready') found.status = 'claimed';
+    session.scenarioId = found.id;
+    return structuredClone(found);
   }
-  async claimFilling(sessionId: string, blueprintId: string) {
-    const filling = [...this.scenarios.values()].find(row => row.status === 'filling' && row.sessionId === null && row.blueprintId === blueprintId);
-    if (!filling) return null;
-    filling.sessionId = sessionId;
-    return structuredClone(filling);
-  }
+  async claimReady(sessionId: string, blueprintId: string) { return this.claimOpen(sessionId, blueprintId, 'ready'); }
+  async claimFilling(sessionId: string, blueprintId: string) { return this.claimOpen(sessionId, blueprintId, 'filling'); }
   async insertFilling(id: string, blueprintId: string, prompt: string, sessionId: string | null) {
     this.scenarios.set(id, {
       id, blueprintId, status: 'filling', sessionId, runId: null, prompt, content: null, error: null,
@@ -127,11 +127,11 @@ export class MemoryScenarioStore implements ScenarioStore {
   }
   async health() {}
   async scenario(id: string) { return structuredClone(this.scenarios.get(id) ?? null); }
-  async fillingCount(blueprintId: string) {
-    return [...this.scenarios.values()].filter(row => row.blueprintId === blueprintId && row.status === 'filling').length;
-  }
   async poolDepth(blueprintId: string) {
     return [...this.scenarios.values()].filter(row => row.blueprintId === blueprintId && row.sessionId === null && (row.status === 'ready' || row.status === 'filling')).length;
+  }
+  async fillingCount(blueprintId: string) {
+    return [...this.scenarios.values()].filter(row => row.blueprintId === blueprintId && row.status === 'filling').length;
   }
   async withPoolLock<T>(work: () => Promise<T>): Promise<T> {
     const previous = this.lock;

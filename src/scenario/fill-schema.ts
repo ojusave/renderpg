@@ -5,9 +5,17 @@ const object = (properties: Record<string, unknown>) => ({
   type: 'object', properties, required: Object.keys(properties), additionalProperties: false,
 });
 
+function excerpts(prompt: string): string[] {
+  const sentences = prompt.split(/(?<=[.!?])\s+/).map(value => value.trim()).filter(value => value.length > 3);
+  const unique = [...new Set(sentences)];
+  if (prompt.length > 800 || unique.length > 6) return [];
+  return unique;
+}
+
 /** Structured-output schema for blueprint text slots. Cast comes first so the model plans names before prose. */
-export function scenarioFillSchema(_prompt: string): Record<string, unknown> {
-  const slot = object({ text, sourceExcerpt: text });
+export function scenarioFillSchema(prompt: string): Record<string, unknown> {
+  const quote = excerpts(prompt);
+  const slot = object({ text, sourceExcerpt: quote.length ? { type: 'string', enum: quote } : text });
   const choice = object({ label: text });
   const wording = object(Object.fromEntries(decideActionIds.map(id => [id, text])));
   return object({
@@ -30,7 +38,7 @@ Reuse one cast in every slot. cast.customer is the person asking, cast.company i
 
 The game shows these questions. Write each question and each label about the transcript's request, 4 to 12 words, no period.
 Question 1, "What do you do first?": open_record looks up the record and does nothing else. transfer_now does what they asked, immediately. turn_away tells them it cannot be done.
-questions.investigate names the request they want done without a check, then asks what the player does. trace_owner checks the claim. take_word skips the check and does not carry out the request. escalate_early hands the whole case to a Security lead.
+questions.investigate names the request they want done without a check, then asks what the player does. trace_owner checks the claim and must not say transfer. take_word skips the check; its label must not say transfer, approve, or grant, for example "Skip the check and use what they said". escalate_early hands the whole case to a Security lead and must not say transfer.
 Question 3 changes with the state, and so do its labels.
 questions.decide_verified says the check confirmed the request should be granted, then asks what the player does. decide.verified.transfer_account carries out the request. decide.verified.decline_transfer refuses it anyway. decide.verified.escalate asks a lead to approve a decision the player could make. These labels must not say the check was skipped.
 questions.decide_unverified says the request has not been checked, then asks what the player does. decide.unverified.transfer_account carries it out on their word. decide.unverified.decline_transfer waits until someone checks. decide.unverified.escalate asks a lead to decide. These labels must not mention findings, proof, or a completed check.
@@ -42,5 +50,5 @@ Steps, each one sentence, and none of them may carry out the request:
 - setups.decide_verified: the check stands, they are waiting, and a lead would only add delay. Do not doubt the check.
 - trust_result: you do not check the explanation. Do not accept, approve, confirm, or carry out the request.
 - setups.decide_unverified: the request is still unchecked and they want an answer. Do not say it was done.
-- endings: one or two sentences about that ending's single final action, using the transcript's request. transferred_too_early says you could not have known the immediate action was safe. turned_away refuses a legitimate request. escalated_early stops before the check. success checks, then does what they asked. unverified_transfer does it on their word, so it could have been the wrong call. declined_verified refuses after the check confirmed the request, and no lead is involved. declined_unverified refuses because nobody checked. escalated_verified delays a decision the player could make. escalated_unverified is a fair handoff of an unchecked case. Titles are 2 to 5 words.
+- endings: one or two sentences about that ending's single final action, using the transcript's request. Do not add a later discovery, a second claimant, or a hidden agreement. transferred_too_early says you could not have known the immediate action was safe. turned_away refuses a legitimate request. escalated_early happens after the record was read and before the claim was checked, so do not say the record was skipped. success checks, then does what they asked. unverified_transfer does it on their word, so it could have been the wrong call. declined_verified refuses after the check confirmed the request, and no lead is involved. declined_unverified refuses because nobody checked. escalated_verified delays a decision the player could make. escalated_unverified is a fair handoff of an unchecked case. Titles are 2 to 5 words.
 - title: short and specific to the transcript. objective: one sentence naming the decision the transcript asks for. briefing: two sentences, who asked, what they want, and why they are in a hurry.`;

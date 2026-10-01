@@ -45,7 +45,10 @@ paths:
   /sessions:
     post:
       operationId: signIn
-      summary: Start a session and claim or fill the account-ownership scenario
+      summary: Start a game URL for the SSO user, or for the anonymous player id when SSO is absent
+      description: |
+        Send `X-Player-Id` only when it was returned by an earlier sign-in and Render SSO is off.
+        The bearer token authorizes the game. The id in the URL does not.
       responses:
         '200':
           description: Session assigned a ready scenario, or a fill is running
@@ -153,6 +156,118 @@ paths:
                 $ref: '#/components/schemas/Game'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/InvalidRequest'
+  /sessions/{session_id}:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/SessionAuthorization'
+    delete:
+      operationId: endGame
+      summary: End this game so its token cannot be reused
+      responses:
+        '200':
+          description: Session ended
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status:
+                    const: ended
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    get:
+      operationId: readGame
+      summary: Read this game URL
+      responses:
+        '200':
+          description: Preparation status. Game is present only after begin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionState'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /sessions/{session_id}/progress:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/SessionAuthorization'
+    get:
+      operationId: watchGameProgress
+      summary: Stream fill progress for this game URL
+      responses:
+        '200':
+          description: Server-sent progress events. Each event data object is a FillProgress checkpoint.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /sessions/{session_id}/begin:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/SessionAuthorization'
+    post:
+      operationId: beginGame
+      summary: Open the scenario assigned to this game URL
+      responses:
+        '200':
+          description: Playable scenario view. No model call is made.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /sessions/{session_id}/choices:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/SessionAuthorization'
+      - $ref: '#/components/parameters/IdempotencyKey'
+    post:
+      operationId: chooseGameAction
+      summary: Apply one blueprint action to this game URL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action_id, expected_version]
+              properties:
+                action_id:
+                  type: string
+                  minLength: 1
+                  maxLength: 80
+                expected_version:
+                  type: integer
+                  minimum: 0
+      responses:
+        '200':
+          description: Updated scenario view
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
         '422':
@@ -332,6 +447,13 @@ components:
       schema:
         type: string
         format: uuid
+    SessionId:
+      name: session_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     SessionAuthorization:
       name: Authorization
       in: header
@@ -351,11 +473,19 @@ components:
     SessionState:
       type: object
       additionalProperties: false
-      required: [status, session_token, run_id, message, game, progress]
+      required: [status, session_token, player_id, game_id, game_url, run_id, message, game, progress]
       properties:
         status:
           enum: [preparing, ready, failed]
         session_token:
+          type: string
+        player_id:
+          type: string
+          format: uuid
+        game_id:
+          type: string
+          format: uuid
+        game_url:
           type: string
         run_id:
           type: [string, 'null']

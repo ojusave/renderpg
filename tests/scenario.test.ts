@@ -7,7 +7,7 @@ import { InlineFillRunner } from '../src/adapters/inline-fill-runner.js';
 import { ScenarioService } from '../src/application/scenario-service.js';
 import { defaultScenarioPrompt } from '../src/scenario/default-prompt.js';
 import { applyChoice, legalActions, openPlay, presentPlay } from '../src/scenario/engine.js';
-import { validateFill } from '../src/scenario/fill.js';
+import { alignFill, validateFill } from '../src/scenario/fill.js';
 import { fillInstructions } from '../src/scenario/fill-schema.js';
 import { offlineFill } from '../src/scenario/offline-fill.js';
 import { MemoryScenarioStore } from './scenario-memory.js';
@@ -28,6 +28,17 @@ test('fill validation rejects travel and invented excerpts', () => {
   fill.trust_result = 'You do not check the explanation.';
   fill.evidence.account_record.sourceExcerpt = 'A fact that was never in the source.';
   assert.ok(validateFill(fill, defaultScenarioPrompt).some(error => error.includes('excerpt')));
+});
+
+test('a skip-the-check option that transfers is rewritten to the action taken', () => {
+  const fill = offlineFill();
+  const name = fill.cast.customer.split(' ')[0];
+  fill.choices.take_word.label = 'Skip the check and transfer it';
+  fill.trust_result = 'You transfer the account to Priya.';
+  const aligned = alignFill(fill);
+  assert.equal(aligned.choices.take_word.label, `Skip the check and use what ${name} said`);
+  assert.match(aligned.trust_result, /do not check/i);
+  assert.equal(validateFill(aligned, defaultScenarioPrompt).some(error => error.includes('not a transfer')), false);
 });
 
 test('transfer succeeds only after the owner is traced', () => {

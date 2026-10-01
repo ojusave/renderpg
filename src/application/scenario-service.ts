@@ -15,15 +15,8 @@ import { watchFill } from './watch-progress.js';
 const retiredMessage = 'This case was made by an earlier version of the game. Start a new case.';
 
 export type SessionView = {
-  status: 'preparing' | 'ready' | 'failed';
-  session_token: string;
-  player_id: string;
-  game_id: string;
-  game_url: string;
-  run_id: string | null;
-  message: string | null;
-  game: GameView | null;
-  progress: ProgressJson;
+  status: 'preparing' | 'ready' | 'failed'; session_token: string; player_id: string; game_id: string; game_url: string;
+  run_id: string | null; message: string | null; game: GameView | null; progress: ProgressJson;
 };
 
 /** Claims a filled scenario at sign-in and plays it from the blueprint. */
@@ -55,58 +48,68 @@ export class ScenarioService {
     return done ? readyProgress(progress) : progress;
   }
 
-  /** Creates a session and assigns a ready scenario, or starts a fill. */
-  async signIn(): Promise<SessionView> {
+  /** Creates a game URL for an SSO user or a generated anonymous player. */
+  async signIn(input: { subject?: string | null; playerId?: string | null } = {}): Promise<SessionView> {
+    const playerId = await resolvePlayer(this.store, input);
     const id = randomUUID();
     const token = randomBytes(32).toString('base64url');
-    const playerId = await resolvePlayer(this.store, {});
     await this.store.createSession(id, this.hash(token), playerId);
     const claimed = await this.store.claimReady(id, blueprintId);
     if (claimed) {
       await this.store.setSessionScenario(id, claimed.id);
       this.kickPool();
-      return this.view(token, 'ready', null, null, null, this.shown(claimed.progress, true));
+      return this.view(token, id, playerId, 'ready', null, null, null, this.shown(claimed.progress, true));
     }
     const inflight = await this.store.claimFilling(id, blueprintId);
     if (inflight) {
       await this.store.setSessionScenario(id, inflight.id);
       this.kickPool();
-      return this.view(token, 'preparing', inflight.runId, null, null, inflight.progress);
+      return this.view(token, id, playerId, 'preparing', inflight.runId, null, null, inflight.progress);
     }
-    const scenarioId = randomUUID();
     const prompt = await this.sourcePrompt();
-    await this.store.insertFilling(scenarioId, blueprintId, prompt, id);
-    await this.store.setSessionScenario(id, scenarioId);
+    const scenarioId = await reservePlayerFill(this.store, id, prompt);
+    if (!scenarioId) {
+      this.kickPool();
+      return this.view(token, id, playerId, 'preparing', null, null, null, queuedProgress());
+    }
     let runId: string | null = null;
     try {
       const run = await this.runner.start({ scenarioId, prompt });
       runId = run.runId;
       await this.store.setRun(scenarioId, run.runId);
-      if (this.scheduler?.background) this.kickPool();
-      if (this.runner.background) return this.view(token, 'preparing', run.runId, null, null, (await this.store.scenario(scenarioId))?.progress ?? queuedProgress());
+      this.kickPool();
+      if (this.runner.background) return this.view(token, id, playerId, 'preparing', run.runId, null, null, (await this.store.scenario(scenarioId))?.progress ?? queuedProgress());
     } catch (error) {
-      if (this.scheduler?.background) this.kickPool();
+      this.kickPool();
       const failed = await this.store.scenario(scenarioId);
-      return this.view(token, 'failed', null, failed?.error ?? (error instanceof Error ? error.message : 'Fill failed'), null, failed?.progress ?? queuedProgress());
+      return this.view(token, id, playerId, 'failed', null, failed?.error ?? (error instanceof Error ? error.message : 'Fill failed'), null, failed?.progress ?? queuedProgress());
     }
-    return this.view(token, 'ready', runId, null, null, this.shown((await this.store.scenario(scenarioId))?.progress, true));
+    return this.view(token, id, playerId, 'ready', runId, null, null, this.shown((await this.store.scenario(scenarioId))?.progress, true));
   }
 
-  async current(token: string): Promise<SessionView> {
-    const player = await this.session(token);
-    if (!player.scenarioId) return this.view(token, 'preparing', null, null, null, queuedProgress());
+  async current(token: string, gameId?: string): Promise<SessionView> {
+    const player = await this.session(token, gameId);
+    if (!player.scenarioId) {
+      const claimed = await this.store.claimReady(player.id, blueprintId) ?? await this.store.claimFilling(player.id, blueprintId);
+      if (!claimed) {
+        this.kickPool();
+        return this.view(token, player.id, player.playerId, 'preparing', null, null, null, queuedProgress());
+      }
+      await this.store.setSessionScenario(player.id, claimed.id);
+      player.scenarioId = claimed.id;
+    }
     const scenario = await this.store.scenario(player.scenarioId);
     if (!scenario) throw new AppError(404, 'scenario_not_found', 'Scenario not found for this session.');
-    if (scenario.status === 'failed') return this.view(token, 'failed', scenario.runId, scenario.error ?? 'The scenario could not be prepared.', null, scenario.progress);
-    if (scenario.blueprintId !== blueprintId) return this.view(token, 'failed', scenario.runId, retiredMessage, null, scenario.progress);
-    if (!scenario.content) return this.view(token, 'preparing', scenario.runId, null, null, scenario.progress);
+    if (scenario.status === 'failed') return this.view(token, player.id, player.playerId, 'failed', scenario.runId, scenario.error ?? 'The scenario could not be prepared.', null, scenario.progress);
+    if (scenario.blueprintId !== blueprintId) return this.view(token, player.id, player.playerId, 'failed', scenario.runId, retiredMessage, null, scenario.progress);
+    if (!scenario.content) return this.view(token, player.id, player.playerId, 'preparing', scenario.runId, null, null, scenario.progress);
     const game = player.play ? presentPlay(player.id, scenario.content, player.play) : null;
-    return this.view(token, 'ready', scenario.runId, null, game, this.shown(scenario.progress, true));
+    return this.view(token, player.id, player.playerId, 'ready', scenario.runId, null, game, this.shown(scenario.progress, true));
   }
 
   /** Streams checkpoint progress until this session's fill finishes. */
-  async watch(token: string, signal: AbortSignal, emit: (progress: ProgressJson) => void): Promise<void> {
-    const player = await this.session(token);
+  async watch(token: string, signal: AbortSignal, emit: (progress: ProgressJson) => void, gameId?: string): Promise<void> {
+    const player = await this.session(token, gameId);
     if (!player.scenarioId) { emit(progressJson(queuedProgress(), null)); return; }
     const scenario = await this.store.scenario(player.scenarioId);
     if (!scenario) throw new AppError(404, 'scenario_not_found', 'Scenario not found for this session.');
@@ -114,8 +117,8 @@ export class ScenarioService {
   }
 
   /** Opens the assigned scenario. This does not call the model. */
-  async begin(token: string): Promise<GameView> {
-    const player = await this.session(token);
+  async begin(token: string, gameId?: string): Promise<GameView> {
+    const player = await this.session(token, gameId);
     const scenario = player.scenarioId ? await this.store.scenario(player.scenarioId) : null;
     if (scenario && scenario.blueprintId !== blueprintId) throw conflict('scenario_retired', retiredMessage);
     if (!scenario?.content) throw new AppError(409, 'scenario_not_ready', 'The scenario is still being prepared.');
@@ -125,8 +128,8 @@ export class ScenarioService {
     return presentPlay(player.id, scenario.content, play);
   }
 
-  async choose(token: string, key: string, actionId: string, expectedVersion: number): Promise<GameView> {
-    const player = await this.session(token);
+  async choose(token: string, key: string, actionId: string, expectedVersion: number, gameId?: string): Promise<GameView> {
+    const player = await this.session(token, gameId);
     const requestHash = createHash('sha256').update(`${actionId}:${expectedVersion}`).digest('hex');
     return this.store.commitChoice(player.id, key, requestHash, async play => {
       if (play.version !== expectedVersion) throw conflict('stale_state', 'Another choice changed this scenario. Refresh before trying again.');
@@ -141,8 +144,8 @@ export class ScenarioService {
   }
 
   /** Revokes the bearer token and leaves its scenario out of the pool. */
-  async end(token: string): Promise<void> {
-    const player = await this.session(token);
+  async end(token: string, gameId?: string): Promise<void> {
+    const player = await this.session(token, gameId);
     await this.store.deleteSession(player.id);
   }
 
@@ -182,10 +185,14 @@ export class ScenarioService {
   /** Restores the pool without delaying the caller. Render mode starts the parent workflow. */
   warm(): void { this.kickPool(); }
 
-  /** Restores the pool without delaying the sign-in response. */
+  /** Restores the pool without delaying the sign-in response. A burst shares one attempt. */
   private kickPool(): void {
+    const now = Date.now();
+    if (this.replenishInflight || now - this.replenishAt < 1000) return;
+    this.replenishAt = now;
     const job = this.scheduler ? this.scheduler.schedule() : this.replenish();
-    void job.catch(error => {
+    this.replenishInflight = job.finally(() => { this.replenishInflight = null; });
+    void this.replenishInflight.catch(error => {
       console.warn(JSON.stringify({ event: 'pool_replenish_failed', message: error instanceof Error ? error.message : 'unknown' }));
     });
   }

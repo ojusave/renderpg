@@ -22,7 +22,8 @@ export interface ScenarioFill {
 }
 
 const travel = /\b(visit|travel|travels|walk|drive|go to|office|head over)\b/i;
-const moved = /\b(transfer(?:red|ring)?|hand(?:ed)? (?:it |the account )?over|g(?:ive|ives|ave) (?:them |the customer )?(?:[A-Z][a-z]+ )?the account|moved the account)\b/i;
+const moved = /\b(you transfer|you transferred|transferred the account|handed (?:it |the account )?over|g(?:ive|ives|ave) (?:them |the customer )?(?:[A-Z][a-z]+ )?the account)\b/i;
+const transferWord = /\btransfer\b/i;
 const confirmed = /\b(confirm(?:ed|s|ation)?|proof|verified|you find|you found|you discover)\b/i;
 
 function normalized(value: string): string {
@@ -46,10 +47,10 @@ function senseErrors(fill: ScenarioFill): string[] {
   bad(fill.evidence?.account_record?.text, moved, 'Reading the record must not move the account');
   bad(fill.evidence?.owner_trace?.text, moved, 'Checking ownership must not move the account');
   for (const id of setupIds) bad(fill.setups?.[id], moved, `Setup ${id} must not move the account`);
-  bad(labelOf(fill.choices?.take_word), moved, 'Skipping the check is not a transfer');
-  bad(labelOf(fill.choices?.trace_owner), moved, 'Checking ownership is not a transfer');
-  bad(labelOf(fill.choices?.open_record), moved, 'Opening the record is not a transfer');
-  bad(labelOf(fill.choices?.escalate_early), moved, 'Escalating is not a transfer');
+  bad(labelOf(fill.choices?.take_word), transferWord, 'Skipping the check is not a transfer');
+  bad(labelOf(fill.choices?.trace_owner), transferWord, 'Checking the claim is not a transfer');
+  bad(labelOf(fill.choices?.open_record), transferWord, 'Opening the record is not a transfer');
+  bad(labelOf(fill.choices?.escalate_early), transferWord, 'Escalating is not a transfer');
   bad(labelOf(fill.decide?.unverified?.transfer_account), /\b(finding|proof|confirm|verified|investigation)\b/i, 'An unchecked transfer must not mention a check');
   bad(labelOf(fill.decide?.verified?.transfer_account), /\b(word|unchecked|without)\b/i, 'A checked transfer must not say the check was skipped');
   bad(labelOf(fill.decide?.verified?.decline_transfer), /\b(proof|unverified|without a check)\b/i, 'Declining after a check must not say the check is missing');
@@ -61,6 +62,23 @@ function senseErrors(fill: ScenarioFill): string[] {
     if (!fill.questions?.[id]?.trim()) errors.push(`Question ${id} is incomplete`);
   }
   return errors;
+}
+
+/** Rewrites a label or step that describes a different action from the one the player took. */
+export function alignFill(fill: ScenarioFill): ScenarioFill {
+  const next = structuredClone(fill);
+  const name = next.cast?.customer?.split(/\s+/)[0] || 'them';
+  const keep = (label: string | undefined, pattern: RegExp, fallback: string) => label && pattern.test(label) ? fallback : label ?? '';
+  if (next.choices) {
+    next.choices.open_record = { label: keep(next.choices.open_record?.label, transferWord, 'Look up the record first') };
+    next.choices.trace_owner = { label: keep(next.choices.trace_owner?.label, transferWord, `Check whether ${name} should have it`) };
+    next.choices.take_word = { label: keep(next.choices.take_word?.label, transferWord, `Skip the check and use what ${name} said`) };
+    next.choices.escalate_early = { label: keep(next.choices.escalate_early?.label, transferWord, 'Hand the case to a Security lead') };
+  }
+  if (moved.test(next.trust_result ?? '') || confirmed.test(next.trust_result ?? '') || /\b(accept|approve)\b/i.test(next.trust_result ?? '')) {
+    next.trust_result = `You do not check ${name}'s explanation.`;
+  }
+  return next;
 }
 
 /** Rejects a fill that leaves the blueprint, invents evidence, or describes the wrong action. */

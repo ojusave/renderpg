@@ -9,7 +9,7 @@ export class PostgresRepository implements GameRepository {
   private readonly ownsPool: boolean;
   constructor(connectionString: string, pool?: pg.Pool) {
     this.ownsPool = !pool;
-    this.pool = pool ?? new pg.Pool({ connectionString, max: 10, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 });
+    this.pool = pool ?? new pg.Pool({ connectionString, max: 20, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 });
     if (this.ownsPool) this.pool.on('error', () => console.error('Postgres idle connection failed'));
   }
   async creation(key: string): Promise<Creation | null> {

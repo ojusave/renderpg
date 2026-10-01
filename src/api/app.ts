@@ -30,7 +30,7 @@ export function buildApp(service: GameService, repo: GameRepository, logging = f
   app.addHook('onRequest', async request => {
     if (!oktaRequired() || request.url.split('?')[0] === '/health') return;
     const header = request.headers['x-forwarded-access-token'];
-    await verifyEmployeeToken(Array.isArray(header) ? header[0] : header);
+    (request as { employeeSubject?: string }).employeeSubject = await verifyEmployeeToken(Array.isArray(header) ? header[0] : header);
   });
   app.get('/health', { schema: routeSchema('/health', 'get') }, async () => {
     try {
@@ -59,16 +59,26 @@ export function buildApp(service: GameService, repo: GameRepository, logging = f
     { schema: routeSchema('/games/{game_id}', 'get') }, async request => service.get(request.params.game_id, bearer(request.headers.authorization)));
   if (scenarios) {
     registerProgress(app, scenarios);
-    app.post('/sessions', { schema: routeSchema('/sessions', 'post') }, async () => scenarios.signIn());
-    app.delete('/sessions/current', { schema: routeSchema('/sessions/current', 'delete') }, async request => {
-      await scenarios.end(bearer(request.headers.authorization));
-      return { status: 'ended' as const };
-    });
-    app.get('/sessions/current', { schema: routeSchema('/sessions/current', 'get') }, async request => scenarios.current(bearer(request.headers.authorization)));
-    app.post('/sessions/current/begin', { schema: routeSchema('/sessions/current/begin', 'post') }, async request => scenarios.begin(bearer(request.headers.authorization)));
-    app.post<{ Body: { action_id: string; expected_version: number }; Headers: { 'idempotency-key': string } }>('/sessions/current/choices',
-      { schema: routeSchema('/sessions/current/choices', 'post') }, async request => scenarios.choose(
-        bearer(request.headers.authorization), request.headers['idempotency-key'], request.body.action_id, request.body.expected_version));
+    const headerValue = (value?: string | string[]) => Array.isArray(value) ? value[0] : value;
+    app.post('/sessions', { schema: routeSchema('/sessions', 'post') }, async request => scenarios.signIn({
+      subject: (request as { employeeSubject?: string }).employeeSubject ?? null,
+      playerId: headerValue(request.headers['x-player-id']),
+    }));
+    const play = (route: string, contractPath: string) => {
+      app.delete<{ Params: { session_id?: string } }>(route, { schema: routeSchema(contractPath, 'delete') }, async request => {
+        await scenarios.end(bearer(request.headers.authorization), request.params.session_id);
+        return { status: 'ended' as const };
+      });
+      app.get<{ Params: { session_id?: string } }>(route, { schema: routeSchema(contractPath, 'get') }, async request =>
+        scenarios.current(bearer(request.headers.authorization), request.params.session_id));
+      app.post<{ Params: { session_id?: string } }>(`${route}/begin`, { schema: routeSchema(`${contractPath}/begin`, 'post') }, async request =>
+        scenarios.begin(bearer(request.headers.authorization), request.params.session_id));
+      app.post<{ Params: { session_id?: string }; Body: { action_id: string; expected_version: number }; Headers: { 'idempotency-key': string } }>(
+        `${route}/choices`, { schema: routeSchema(`${contractPath}/choices`, 'post') }, async request => scenarios.choose(
+          bearer(request.headers.authorization), request.headers['idempotency-key'], request.body.action_id, request.body.expected_version, request.params.session_id));
+    };
+    play('/sessions/current', '/sessions/current');
+    play('/sessions/:session_id', '/sessions/{session_id}');
   }
   app.post<{ Params: { game_id: string }; Body: { text: string; expected_version: number }; Headers: { 'idempotency-key': string } }>('/games/:game_id/turns',
     { schema: routeSchema('/games/{game_id}/turns', 'post') }, async request => {

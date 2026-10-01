@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { AppError } from '../application/errors.js';
 import type { ScenarioService } from '../application/scenario-service.js';
 
@@ -8,9 +8,9 @@ const bearer = (authorization?: string) => {
   return match[1]!;
 };
 
-/** Streams fill progress for the signed-in session until the task finishes. */
+/** Streams fill progress for one game URL until the task finishes. */
 export function registerProgress(app: FastifyInstance, scenarios: ScenarioService): void {
-  app.get('/sessions/current/progress', async (request, reply) => {
+  const stream = async (request: FastifyRequest<{ Params: { session_id?: string } }>, reply: FastifyReply) => {
     const header = request.headers.authorization;
     const token = bearer(Array.isArray(header) ? header[0] : header);
     reply.hijack();
@@ -28,7 +28,7 @@ export function registerProgress(app: FastifyInstance, scenarios: ScenarioServic
       if (!abort.signal.aborted) reply.raw.write(`event: progress\ndata: ${JSON.stringify(payload)}\n\n`);
     };
     try {
-      await scenarios.watch(token, abort.signal, write);
+      await scenarios.watch(token, abort.signal, write, request.params.session_id);
     } catch (error) {
       const message = error instanceof AppError ? error.message : 'Progress is unavailable.';
       if (!abort.signal.aborted) reply.raw.write(`event: error\ndata: ${JSON.stringify({ message })}\n\n`);
@@ -37,5 +37,7 @@ export function registerProgress(app: FastifyInstance, scenarios: ScenarioServic
       request.raw.off('close', stop);
       reply.raw.end();
     }
-  });
+  };
+  app.get('/sessions/current/progress', stream);
+  app.get('/sessions/:session_id/progress', stream);
 }
