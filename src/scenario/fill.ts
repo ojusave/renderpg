@@ -74,6 +74,17 @@ export function alignFill(fill: ScenarioFill): ScenarioFill {
     next.choices.trace_owner = { label: keep(next.choices.trace_owner?.label, transferWord, `Check whether ${name} should have it`) };
     next.choices.take_word = { label: keep(next.choices.take_word?.label, transferWord, `Skip the check and use what ${name} said`) };
     next.choices.escalate_early = { label: keep(next.choices.escalate_early?.label, transferWord, 'Hand the case to a Security lead') };
+    if (/without|before/i.test(next.choices.escalate_early.label) && /record/i.test(next.choices.escalate_early.label)) {
+      next.choices.escalate_early = { label: 'Hand the case to a Security lead' };
+    }
+  }
+  const early = next.endings?.escalated_early;
+  if (early && /without opening|before (reading|looking|opening)/i.test(early.summary)) {
+    early.summary = `You read the record, then handed the case to a Security lead before checking whether ${name} should have it.`;
+  }
+  const rushed = next.endings?.transferred_too_early;
+  if (rushed && /\b(different|another|real owner|later)\b/i.test(rushed.summary)) {
+    rushed.summary = `You gave ${name} the account before checking anything, so you could not know it reached the right person.`;
   }
   if (moved.test(next.trust_result ?? '') || confirmed.test(next.trust_result ?? '') || /\b(accept|approve)\b/i.test(next.trust_result ?? '')) {
     next.trust_result = `You do not check ${name}'s explanation.`;

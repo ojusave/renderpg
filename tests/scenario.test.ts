@@ -34,9 +34,11 @@ test('a skip-the-check option that transfers is rewritten to the action taken', 
   const fill = offlineFill();
   const name = fill.cast.customer.split(' ')[0];
   fill.choices.take_word.label = 'Skip the check and transfer it';
+  fill.choices.escalate_early.label = 'Hand it over before opening the record';
   fill.trust_result = 'You transfer the account to Priya.';
   const aligned = alignFill(fill);
   assert.equal(aligned.choices.take_word.label, `Skip the check and use what ${name} said`);
+  assert.equal(aligned.choices.escalate_early.label, 'Hand the case to a Security lead');
   assert.match(aligned.trust_result, /do not check/i);
   assert.equal(validateFill(aligned, defaultScenarioPrompt).some(error => error.includes('not a transfer')), false);
 });
