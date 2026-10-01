@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { OfflineAuthor } from '../src/adapters/offline-author.js';
 import { InlineFillRunner } from '../src/adapters/inline-fill-runner.js';
 import { ScenarioService } from '../src/application/scenario-service.js';
@@ -9,6 +10,8 @@ import { applyChoice, openPlay } from '../src/scenario/engine.js';
 import { validateFill } from '../src/scenario/fill.js';
 import { offlineFill } from '../src/scenario/offline-fill.js';
 import { MemoryScenarioStore } from './scenario-memory.js';
+import { reservePoolFills } from '../src/application/reserve-pool.js';
+import { poolTarget } from '../src/scenario/blueprint.js';
 
 const secret = 's'.repeat(32);
 
@@ -76,6 +79,54 @@ test('sign-in gives the agent a redacted slack story when one is pending', async
   assert.equal(session.status, 'ready');
   assert.match(seen[0] ?? '', /Speaker A/);
   assert.equal((seen[0] ?? '').includes('@'), false);
+});
+
+test('sign-in schedules pool replenishment instead of filling it inline', async () => {
+  const store = new MemoryScenarioStore();
+  const author = new OfflineAuthor();
+  let scheduled = 0;
+  const service = new ScenarioService(store, author, new InlineFillRunner(store, author), secret, null, {
+    background: true,
+    async schedule() { scheduled += 1; },
+  });
+  const seeded = randomUUID();
+  await store.insertFilling(seeded, 'account_ownership_v1', defaultScenarioPrompt, null);
+  await store.markReady(seeded, offlineFill());
+  const session = await service.signIn();
+  assert.equal(session.status, 'ready');
+  assert.equal(scheduled, 1);
+  assert.equal(await store.poolDepth('account_ownership_v1'), 0);
+});
+
+test('an empty pool starts the player fill and then the pool parent', async () => {
+  const store = new MemoryScenarioStore();
+  let started = 0;
+  let scheduled = 0;
+  const runner = { background: true, async start() { started += 1; return { runId: randomUUID() }; } };
+  const service = new ScenarioService(store, new OfflineAuthor(), runner, secret, null, {
+    background: true,
+    async schedule() { scheduled += 1; },
+  });
+  const session = await service.signIn();
+  assert.equal(session.status, 'preparing');
+  assert.equal(started, 1);
+  assert.equal(scheduled, 1);
+});
+
+test('pool reservation stops at the target', async () => {
+  const store = new MemoryScenarioStore();
+  const first = await reservePoolFills(store, async () => defaultScenarioPrompt);
+  const second = await reservePoolFills(store, async () => defaultScenarioPrompt);
+  assert.equal(first.length, poolTarget);
+  assert.equal(second.length, 0);
+  assert.equal(await store.poolDepth('account_ownership_v1'), poolTarget);
+});
+
+test('the game workflow replenishes by chaining fillScenario', async () => {
+  const source = await readFile(new URL('../workflows/main.ts', import.meta.url), 'utf8');
+  assert.match(source, /name: 'replenishScenarioPool'/);
+  assert.match(source, /ctx\.run\(fillScenario/);
+  assert.equal(source.toLowerCase().includes('slack'), false);
 });
 
 test('an empty pool fills one scenario during sign-in', async () => {

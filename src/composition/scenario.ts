@@ -4,6 +4,7 @@ import { OfflineAuthor } from '../adapters/offline-author.js';
 import { PostgresScenarioStore } from '../adapters/scenario-postgres.js';
 import { PostgresTranscriptStore } from '../adapters/slack-postgres.js';
 import { RenderFillRunner } from '../adapters/render-fill-runner.js';
+import { RenderPoolScheduler } from '../adapters/render-pool-scheduler.js';
 import { ScenarioService } from '../application/scenario-service.js';
 
 const required = (key: string) => {
@@ -20,8 +21,11 @@ export function composeScenario() {
   const store = new PostgresScenarioStore(required('DATABASE_URL'));
   const workflowMode = process.env.WORKFLOW_MODE ?? 'inline';
   const runner = workflowMode === 'render'
-    ? new RenderFillRunner(process.env.SCENARIO_TASK?.trim() || 'fillScenario', required('RENDER_API_KEY'))
+    ? new RenderFillRunner(required('SCENARIO_TASK'), required('RENDER_API_KEY'))
     : new InlineFillRunner(store, author);
+  const scheduler = workflowMode === 'render'
+    ? new RenderPoolScheduler(required('REPLENISH_TASK'), required('RENDER_API_KEY'))
+    : undefined;
   const prompts = new PostgresTranscriptStore(required('DATABASE_URL'));
-  return { service: new ScenarioService(store, author, runner, required('SESSION_SECRET'), prompts), store, prompts };
+  return { service: new ScenarioService(store, author, runner, required('SESSION_SECRET'), prompts, scheduler), store, prompts };
 }

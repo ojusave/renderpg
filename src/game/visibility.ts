@@ -28,7 +28,7 @@ export function visibleGame(game: GameRecord): GameView {
     transcript: structuredClone(game.transcript),
     stats: currentStats(state),
     stat_changes: currentChanges(state),
-    turn: decisionTurns(definition, game.transcript),
+    turn: Math.min(decisionTurns(definition, game.transcript), turnBudget(definition)),
     turn_budget: turnBudget(definition),
     choice_tally: tally(definition, game.transcript),
   };

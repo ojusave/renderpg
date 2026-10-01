@@ -7,6 +7,7 @@ import { PostgresRepository } from '../src/adapters/postgres.js';
 import { PostgresScenarioStore } from '../src/adapters/scenario-postgres.js';
 import { compileAndPublish } from '../src/application/compile-game.js';
 import { publishFill } from '../src/application/publish-fill.js';
+import { reserveGamePool } from '../src/composition/scenario-pool.js';
 import type { GenerationInput } from '../src/application/ports.js';
 
 const required = (key: string) => {
@@ -32,8 +33,15 @@ task({ name: 'compileAdventure', retry: { maxRetries: 2, waitDurationMs: 1000 } 
     return { status: 'published' as const };
   });
 
-task({ name: 'fillScenario', retry: { maxRetries: 2, waitDurationMs: 1000 } },
+const fillScenario = task({ name: 'fillScenario', retry: { maxRetries: 2, waitDurationMs: 1000 } },
   async function fillScenario(_ctx: TaskContext, input: { scenarioId: string; prompt: string }) {
     await publishFill(scenarioStore, author, input.scenarioId, input.prompt);
     return { status: 'ready' as const };
+  });
+
+task({ name: 'replenishScenarioPool', retry: { maxRetries: 1, waitDurationMs: 1000 }, timeoutSeconds: 1800 },
+  async function replenishScenarioPool(ctx: TaskContext) {
+    const jobs = await reserveGamePool(scenarioStore);
+    for (const job of jobs) await ctx.run(fillScenario, job);
+    return { started: jobs.length };
   });

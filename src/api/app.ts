@@ -6,9 +6,10 @@ import { ScenarioService } from '../application/scenario-service.js';
 import { AppError } from '../application/errors.js';
 import type { GameRepository } from '../application/ports.js';
 import { contract, routeSchema } from './contract.js';
+import { oktaRequired, verifyEmployeeToken } from './okta.js';
 
 export function buildApp(service: GameService, repo: GameRepository, logging = false, scenarios?: ScenarioService) {
-  const app = Fastify({ logger: logging ? { redact: ['req.headers.authorization', 'req.headers.idempotency-key'] } : false, bodyLimit: 16384 });
+  const app = Fastify({ logger: logging ? { redact: ['req.headers.authorization', 'req.headers.idempotency-key', 'req.headers["x-forwarded-access-token"]'] } : false, bodyLimit: 16384 });
   const ajv = new Ajv2020({ strict: false, allErrors: true, coerceTypes: false });
   const addFormats = addFormatsModule as unknown as (instance: Ajv2020) => void;
   addFormats(ajv);
@@ -24,6 +25,11 @@ export function buildApp(service: GameService, repo: GameRepository, logging = f
     if (failure.statusCode === 413) return reply.code(413).send({ code: 'payload_too_large', message: 'Request body is too large.', retryable: false });
     request.log.error({ event: 'request_failed', requestId: request.id });
     return reply.code(503).send({ code: 'dependency_unavailable', message: 'The service is temporarily unavailable. Retry with the same request key.', retryable: true });
+  });
+  app.addHook('onRequest', async request => {
+    if (!oktaRequired() || request.url.split('?')[0] === '/health') return;
+    const header = request.headers['x-forwarded-access-token'];
+    await verifyEmployeeToken(Array.isArray(header) ? header[0] : header);
   });
   app.get('/health', { schema: routeSchema('/health', 'get') }, async () => { await repo.health(); return { status: 'ok', ai: service.capabilities }; });
   app.get('/openapi.json', async () => contract);

@@ -46,6 +46,7 @@ export function simulateAdventure(definition: AdventureDefinition, maxDepth = 20
   const success = definition.endings.filter(ending => ending.result === 'success').some(ending => reachable.has(ending.id));
   const errors = [
     ...(!success ? ['No success ending is reachable within the turn bound'] : []),
+    ...(success && successTurnBudget(definition) > maxPlayerTurns ? [`A success ending must be reachable within ${maxPlayerTurns} decisions`] : []),
     ...(missing.length ? [`Unreachable endings: ${missing.join(', ')}`] : []),
     ...(seen.size >= maxStates ? [`State exploration exceeded ${maxStates} states`] : []),
   ];
@@ -80,7 +81,7 @@ export function successTurnBudget(definition: AdventureDefinition): number {
   return maxPlayerTurns;
 }
 
-/** Decisions a player may make before the case closes; always enough to reach success. */
-export function turnBudget(definition: AdventureDefinition): number {
-  return Math.max(maxPlayerTurns, successTurnBudget(definition));
+/** Decisions a player may make before the case closes. */
+export function turnBudget(_definition: AdventureDefinition): number {
+  return maxPlayerTurns;
 }

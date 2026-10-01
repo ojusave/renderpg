@@ -16,11 +16,13 @@ projects:
               - key: AI_TIMEOUT_MS
                 value: "60000"
               - key: WORKFLOW_MODE
-                value: inline
+                value: render
               - key: WORKFLOW_TASK
-                sync: false
+                value: renderpg-workflows/compileAdventure
               - key: SCENARIO_TASK
-                sync: false
+                value: renderpg-workflows/fillScenario
+              - key: REPLENISH_TASK
+                value: renderpg-workflows/replenishScenarioPool
               - key: RENDER_API_KEY
                 sync: false
         services:
@@ -75,7 +77,7 @@ projects:
               - key: SLACK_USER_TOKEN
                 sync: false
               - key: SLACK_INGEST_ENABLED
-                value: "false"
+                value: "true"
               - key: SLACK_WORKFLOW_MODE
                 value: render
               - key: SLACK_SYNC_TASK

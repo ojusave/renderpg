@@ -36,6 +36,8 @@ export interface ScenarioStore {
   scenario(id: string): Promise<ScenarioRow | null>;
   poolDepth(blueprintId: string): Promise<number>;
   expireStale(beforeIso: string): Promise<number>;
+  /** Runs the critical section alone so two replenishers cannot overfill the pool. */
+  withPoolLock<T>(work: () => Promise<T>): Promise<T>;
   choice(sessionId: string, key: string): Promise<SavedChoice | null>;
   saveChoice(sessionId: string, key: string, requestHash: string, response: GameView): Promise<void>;
 }
@@ -54,4 +56,10 @@ export interface ScenarioAuthor {
 export interface FillRunner {
   readonly background: boolean;
   start(input: { scenarioId: string; prompt: string }): Promise<{ runId: string }>;
+}
+
+/** Starts pool replenishment. Inline mode fills in process; Render mode starts the parent task. */
+export interface PoolScheduler {
+  readonly background: boolean;
+  schedule(): Promise<void>;
 }

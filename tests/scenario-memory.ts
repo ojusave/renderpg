@@ -8,6 +8,7 @@ export class MemoryScenarioStore implements ScenarioStore {
   sessions = new Map<string, { tokenHash: string; scenarioId: string | null; play: PlayState | null }>();
   scenarios = new Map<string, ScenarioRow>();
   choices = new Map<string, SavedChoice>();
+  private lock: Promise<void> = Promise.resolve();
   async createSession(id: string, tokenHash: string) { this.sessions.set(id, { tokenHash, scenarioId: null, play: null }); }
   async sessionByHash(tokenHash: string): Promise<PlayerSession | null> {
     for (const [id, session] of this.sessions) if (session.tokenHash === tokenHash) return { id, scenarioId: session.scenarioId, play: session.play };
@@ -36,6 +37,13 @@ export class MemoryScenarioStore implements ScenarioStore {
   async scenario(id: string) { return structuredClone(this.scenarios.get(id) ?? null); }
   async poolDepth(blueprintId: string) {
     return [...this.scenarios.values()].filter(row => row.blueprintId === blueprintId && row.sessionId === null && (row.status === 'ready' || row.status === 'filling')).length;
+  }
+  async withPoolLock<T>(work: () => Promise<T>): Promise<T> {
+    const previous = this.lock;
+    let release: () => void = () => {};
+    this.lock = new Promise(resolve => { release = resolve; });
+    await previous;
+    try { return await work(); } finally { release(); }
   }
   async expireStale(beforeIso: string) {
     let count = 0;

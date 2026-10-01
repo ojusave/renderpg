@@ -75,6 +75,21 @@ export class PostgresScenarioStore implements ScenarioStore {
       WHERE status='filling' AND updated_at < $1`, [beforeIso]);
     return result.rowCount ?? 0;
   }
+  async withPoolLock<T>(work: () => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', ['scenario-pool']);
+      const result = await work();
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
   async choice(sessionId: string, key: string): Promise<SavedChoice | null> {
     const record = (await this.pool.query('SELECT request_hash, response FROM scenario_choices WHERE session_id=$1 AND request_key=$2', [sessionId, key])).rows[0];
     return record ? { requestHash: record.request_hash, response: record.response } : null;

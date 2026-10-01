@@ -1,7 +1,8 @@
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { AppError, conflict } from './errors.js';
-import type { FillRunner, ScenarioAuthor, ScenarioPromptSource, ScenarioStore } from './scenario-ports.js';
-import { blueprintId, poolTarget, staleFillMs } from '../scenario/blueprint.js';
+import type { FillRunner, PoolScheduler, ScenarioAuthor, ScenarioPromptSource, ScenarioStore } from './scenario-ports.js';
+import { reservePoolFills } from './reserve-pool.js';
+import { blueprintId } from '../scenario/blueprint.js';
 import { defaultScenarioPrompt } from '../scenario/default-prompt.js';
 import { applyChoice, legalActions, openPlay, presentPlay } from '../scenario/engine.js';
 import type { ActionId } from '../scenario/blueprint.js';
@@ -12,7 +13,7 @@ export type SessionView = { status: 'preparing' | 'ready' | 'failed'; session_to
 
 /** Claims a filled scenario at sign-in and plays it from the blueprint. */
 export class ScenarioService {
-  constructor(private store: ScenarioStore, private author: ScenarioAuthor, private runner: FillRunner, private secret: string, private prompts: ScenarioPromptSource | null = null) {
+  constructor(private store: ScenarioStore, private author: ScenarioAuthor, private runner: FillRunner, private secret: string, private prompts: ScenarioPromptSource | null = null, private scheduler?: PoolScheduler) {
     if (secret.length < 32) throw new Error('SESSION_SECRET must contain at least 32 characters');
   }
 
@@ -36,7 +37,7 @@ export class ScenarioService {
     const claimed = await this.store.claimReady(id, blueprintId);
     if (claimed) {
       await this.store.setSessionScenario(id, claimed.id);
-      void this.replenish().catch(() => undefined);
+      this.kickPool();
       return this.view(token, 'ready', null, null, null);
     }
     const scenarioId = randomUUID();
@@ -46,8 +47,10 @@ export class ScenarioService {
     try {
       const run = await this.runner.start({ scenarioId, prompt });
       await this.store.setRun(scenarioId, run.runId);
+      if (this.scheduler?.background) this.kickPool();
       if (this.runner.background) return this.view(token, 'preparing', run.runId, null, null);
     } catch (error) {
+      if (this.scheduler?.background) this.kickPool();
       const failed = await this.store.scenario(scenarioId);
       return this.view(token, 'failed', null, failed?.error ?? (error instanceof Error ? error.message : 'Fill failed'), null);
     }
@@ -112,16 +115,19 @@ export class ScenarioService {
 
   /** Expires abandoned fills and starts replacements up to the pool target. */
   async replenish(): Promise<number> {
-    await this.store.expireStale(new Date(Date.now() - staleFillMs).toISOString());
-    let started = 0;
-    while (await this.store.poolDepth(blueprintId) < poolTarget && started < poolTarget) {
-      const id = randomUUID();
-      const prompt = await this.sourcePrompt();
-      await this.store.insertFilling(id, blueprintId, prompt, null);
-      const run = await this.runner.start({ scenarioId: id, prompt });
-      await this.store.setRun(id, run.runId);
-      started += 1;
+    const jobs = await reservePoolFills(this.store, () => this.sourcePrompt());
+    for (const job of jobs) {
+      const run = await this.runner.start(job);
+      await this.store.setRun(job.scenarioId, run.runId);
     }
-    return started;
+    return jobs.length;
+  }
+
+  /** Restores the pool without delaying the sign-in response. */
+  private kickPool(): void {
+    const job = this.scheduler ? this.scheduler.schedule() : this.replenish();
+    void job.catch(error => {
+      console.warn(JSON.stringify({ event: 'pool_replenish_failed', message: error instanceof Error ? error.message : 'unknown' }));
+    });
   }
 }

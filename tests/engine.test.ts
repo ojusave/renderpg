@@ -6,7 +6,7 @@ import { simulateAdventure } from '../src/adventure/simulator.js';
 import { availableActions, resolveCommand } from '../src/game/engine.js';
 import { decisionTurns } from '../src/game/visibility.js';
 import type { Turn } from '../src/game/types.js';
-import { maxPlayerTurns, successTurnBudget } from '../src/adventure/simulator.js';
+import { maxPlayerTurns, successTurnBudget, turnBudget } from '../src/adventure/simulator.js';
 
 const prompt = 'A Render teammate investigates a failed deploy and should inspect the available evidence before responding.';
 
@@ -34,6 +34,22 @@ test('the play screen never budgets more than four turns', async () => {
   const definition = await new OfflineAI().generate(prompt, 'seed-a');
   assert.ok(successTurnBudget(definition) <= maxPlayerTurns);
   assert.equal(maxPlayerTurns, 4);
+  assert.equal(turnBudget(definition), 4);
+});
+
+test('an adventure that needs more than four decisions is rejected', async () => {
+  const definition = await new OfflineAI().generate(prompt, 'seed-long');
+  const win = definition.actions.find(action => action.effects.some(effect => effect.kind === 'complete'
+    && definition.endings.find(ending => ending.id === effect.endingId)?.result === 'success'))!;
+  for (const n of [1, 2, 3, 4]) {
+    definition.actions.push({ ...structuredClone(win), id: `step_${n}`, verbs: [`step${n}`], label: `Complete preparation step ${n}.`,
+      requires: [...win.requires.filter(rule => rule.kind === 'at'), ...(n > 1 ? [{ kind: 'flag' as const, flag: `step_${n - 1}`, value: true }] : [])],
+      effects: [{ kind: 'setFlag', flag: `step_${n}`, value: true }] });
+  }
+  win.requires = [...win.requires, { kind: 'flag', flag: 'step_4', value: true }];
+  const simulation = simulateAdventure(definition);
+  assert.equal(simulation.valid, false);
+  assert.ok(simulation.errors.some(error => error.includes('within 4 decisions')));
 });
 
 test('moving does not spend a decision and a finished game offers no choices', async () => {
