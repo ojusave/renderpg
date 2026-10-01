@@ -89,6 +89,21 @@ paths:
                 $ref: '#/components/schemas/SessionState'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /sessions/current/progress:
+    get:
+      operationId: watchScenarioProgress
+      summary: Stream fillScenario checkpoint progress for the current session
+      parameters:
+        - $ref: '#/components/parameters/SessionAuthorization'
+      responses:
+        '200':
+          description: Server-sent progress events. Each event data object is a FillProgress checkpoint.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /sessions/current/begin:
     post:
       operationId: beginScenario
@@ -336,7 +351,7 @@ components:
     SessionState:
       type: object
       additionalProperties: false
-      required: [status, session_token, run_id, message, game]
+      required: [status, session_token, run_id, message, game, progress]
       properties:
         status:
           enum: [preparing, ready, failed]
@@ -350,6 +365,34 @@ components:
           anyOf:
             - type: 'null'
             - $ref: '#/components/schemas/Game'
+        progress:
+          $ref: '#/components/schemas/FillProgress'
+    FillProgress:
+      type: object
+      additionalProperties: false
+      required: [phase, percent, label, output_tokens, max_tokens, characters, task_status]
+      properties:
+        phase:
+          enum: [queued, running, generating, validating, saving, ready, failed]
+        percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        label:
+          type: string
+        output_tokens:
+          type: [integer, 'null']
+          description: Official model output tokens. Null until the provider reports them.
+        max_tokens:
+          type: [integer, 'null']
+          description: Token budget for this fill. The writing slice is output_tokens / max_tokens.
+        characters:
+          type: [integer, 'null']
+          description: Characters received while the official token count is still unknown.
+        task_status:
+          type: [string, 'null']
+          enum: [pending, running, succeeded, failed, canceled, null]
+          description: Render task run status. Null when the run has not been read yet.
     RunningGeneration:
       type: object
       additionalProperties: false

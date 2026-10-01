@@ -1,17 +1,11 @@
-export const blueprintId = 'account_ownership_v3' as const;
+export const blueprintId = 'account_ownership_v4' as const;
 
-export const actionIds = [
-  'open_record',
-  'transfer_now',
-  'turn_away',
-  'trace_owner',
-  'take_word',
-  'escalate_early',
-  'transfer_account',
-  'decline_transfer',
-  'escalate',
-] as const;
+export const earlyActionIds = ['open_record', 'transfer_now', 'turn_away', 'trace_owner', 'take_word', 'escalate_early'] as const;
+export const decideActionIds = ['transfer_account', 'decline_transfer', 'escalate'] as const;
+export const actionIds = [...earlyActionIds, ...decideActionIds] as const;
 
+export type EarlyActionId = (typeof earlyActionIds)[number];
+export type DecideActionId = (typeof decideActionIds)[number];
 export type ActionId = (typeof actionIds)[number];
 export type StageId = 'intake' | 'investigate' | 'decide' | 'resolution';
 export type EvidenceId = 'account_record' | 'owner_trace';
@@ -30,13 +24,13 @@ export interface StageSlot {
 }
 
 /** Authored investigation flow. The model writes the words; it cannot add stages or actions. */
-export const accountOwnershipBlueprint: { id: typeof blueprintId; version: 3; stages: StageSlot[] } = {
+export const accountOwnershipBlueprint: { id: typeof blueprintId; version: 4; stages: StageSlot[] } = {
   id: blueprintId,
-  version: 3,
+  version: 4,
   stages: [
     { id: 'intake', label: 'What do you do first?', actions: ['open_record', 'transfer_now', 'turn_away'] },
-    { id: 'investigate', label: 'How do you identify the rightful owner?', actions: ['trace_owner', 'take_word', 'escalate_early'] },
-    { id: 'decide', label: 'What is your decision?', actions: ['transfer_account', 'decline_transfer', 'escalate'] },
+    { id: 'investigate', label: 'The customer wants the account moved without a check. What do you do?', actions: ['trace_owner', 'take_word', 'escalate_early'] },
+    { id: 'decide', label: 'What do you do with the account?', actions: ['transfer_account', 'decline_transfer', 'escalate'] },
     { id: 'resolution', label: 'Resolution', actions: [] },
   ],
 };
@@ -48,5 +42,22 @@ export const endingIds: EndingId[] = [
   'declined_verified', 'declined_unverified', 'escalated_verified', 'escalated_unverified',
 ];
 
-export const poolTarget = 3;
 export const staleFillMs = 15 * 60 * 1000;
+
+function configuredCount(name: string, fallback: number, max: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > max) throw new Error(`${name} must be an integer from 1 to ${max}`);
+  return value;
+}
+
+/** Unclaimed scenarios the pool tries to keep available for a simultaneous burst. */
+export function poolTarget(): number {
+  return configuredCount('SCENARIO_POOL_TARGET', 100, 500);
+}
+
+/** Model fills allowed to run at the same time. */
+export function fillConcurrency(): number {
+  return configuredCount('SCENARIO_FILL_CONCURRENCY', 8, 32);
+}

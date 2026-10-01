@@ -32,8 +32,18 @@ async function request(path: string, body?: unknown, key?: string, method = body
 }
 async function waitUntilReady(): Promise<void> {
   const deadline = Date.now() + 90000;
+  let shown = -1;
   while (Date.now() < deadline) {
     const current = await request('/sessions/current');
+    const progress = current.progress;
+    if (progress && progress.percent !== shown) {
+      shown = progress.percent;
+      const measured = progress.output_tokens != null && progress.max_tokens != null
+        ? ` (${progress.output_tokens}/${progress.max_tokens} tokens)`
+        : progress.characters != null ? ` (${progress.characters} characters)` : '';
+      const task = progress.task_status ? ` Render task ${progress.task_status}.` : '';
+      console.log(`${progress.label} ${progress.percent}%.${measured}${task}`);
+    }
     if (current.status === 'failed') throw new ApiFailure(503, `scenario_failed: ${current.message ?? 'The case could not be prepared.'}`);
     if (current.game) return;
     if (current.status === 'ready') return;

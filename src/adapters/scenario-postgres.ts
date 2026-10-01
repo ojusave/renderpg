@@ -3,18 +3,21 @@ import { AppError, conflict } from '../application/errors.js';
 import type { GameView } from '../game/types.js';
 import type { PlayState } from '../scenario/engine.js';
 import type { ScenarioFill } from '../scenario/fill.js';
-import type { PlayerSession, ScenarioRow, ScenarioStore, SavedChoice } from '../application/scenario-ports.js';
+import { asProgress, readyProgress, type FillProgress } from '../application/fill-progress.js';
+import type { PlayerRecord, PlayerSession, ScenarioRow, ScenarioStore, SavedChoice } from '../application/scenario-ports.js';
+import { listenProgress } from './scenario-listen.js';
 
 interface ScenarioRecord {
   id: string; blueprint_id: string; status: ScenarioRow['status']; session_id: string | null;
-  run_id: string | null; prompt: string; content: ScenarioFill | null; error: string | null; updated_at: Date | string;
+  run_id: string | null; prompt: string; content: ScenarioFill | null; error: string | null;
+  progress: unknown; updated_at: Date | string;
 }
 
 /** Stores filled scenarios and player sessions in Render Postgres. */
 export class PostgresScenarioStore implements ScenarioStore {
   readonly pool: pg.Pool;
   private readonly ownsPool: boolean;
-  constructor(connectionString: string, pool?: pg.Pool) {
+  constructor(private connectionString: string, pool?: pg.Pool) {
     this.ownsPool = !pool;
     this.pool = pool ?? new pg.Pool({ connectionString, max: 10, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 });
   }
@@ -22,15 +25,27 @@ export class PostgresScenarioStore implements ScenarioStore {
     return {
       id: record.id, blueprintId: record.blueprint_id, status: record.status, sessionId: record.session_id,
       runId: record.run_id, prompt: record.prompt, content: record.content, error: record.error,
-      updatedAt: new Date(record.updated_at).toISOString(),
+      progress: asProgress(record.progress), updatedAt: new Date(record.updated_at).toISOString(),
     };
   }
-  async createSession(id: string, tokenHash: string) {
-    await this.pool.query('INSERT INTO player_sessions(id, token_hash) VALUES($1,$2)', [id, tokenHash]);
+  async insertPlayer(id: string, subject: string | null) {
+    await this.pool.query('INSERT INTO players(id, subject) VALUES($1,$2)', [id, subject]);
+  }
+  async player(id: string): Promise<PlayerRecord | null> {
+    const record = (await this.pool.query('SELECT id, subject FROM players WHERE id=$1', [id])).rows[0];
+    return record ? { id: record.id, subject: record.subject } : null;
+  }
+  async upsertPlayer(id: string, subject: string) {
+    const record = (await this.pool.query(`INSERT INTO players(id, subject) VALUES($1,$2)
+      ON CONFLICT (subject) DO UPDATE SET subject=EXCLUDED.subject RETURNING id`, [id, subject])).rows[0];
+    return record.id as string;
+  }
+  async createSession(id: string, tokenHash: string, playerId: string) {
+    await this.pool.query('INSERT INTO player_sessions(id, token_hash, player_id) VALUES($1,$2,$3)', [id, tokenHash, playerId]);
   }
   async sessionByHash(tokenHash: string): Promise<PlayerSession | null> {
-    const record = (await this.pool.query('SELECT id, scenario_id, play FROM player_sessions WHERE token_hash=$1', [tokenHash])).rows[0];
-    return record ? { id: record.id, scenarioId: record.scenario_id, play: record.play } : null;
+    const record = (await this.pool.query('SELECT id, player_id, scenario_id, play FROM player_sessions WHERE token_hash=$1', [tokenHash])).rows[0];
+    return record ? { id: record.id, playerId: record.player_id, scenarioId: record.scenario_id, play: record.play } : null;
   }
   async setSessionScenario(sessionId: string, scenarioId: string) {
     await this.pool.query('UPDATE player_sessions SET scenario_id=$2 WHERE id=$1', [sessionId, scenarioId]);
@@ -89,6 +104,18 @@ export class PostgresScenarioStore implements ScenarioStore {
     } catch (error) { await client.query('ROLLBACK'); throw error; }
     finally { client.release(); }
   }
+  async claimFilling(sessionId: string, blueprintId: string): Promise<ScenarioRow | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const claimed = (await client.query(`UPDATE filled_scenarios SET session_id=$1, updated_at=now()
+        WHERE id = (SELECT id FROM filled_scenarios WHERE status='filling' AND session_id IS NULL AND blueprint_id=$2
+        ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`, [sessionId, blueprintId])).rows[0];
+      await client.query('COMMIT');
+      return claimed ? this.row(claimed) : null;
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
+  }
   async insertFilling(id: string, blueprintId: string, prompt: string, sessionId: string | null) {
     await this.pool.query(`INSERT INTO filled_scenarios(id, blueprint_id, status, prompt, session_id) VALUES($1,$2,'filling',$3,$4)`,
       [id, blueprintId, prompt, sessionId]);
@@ -96,14 +123,34 @@ export class PostgresScenarioStore implements ScenarioStore {
   async setRun(id: string, runId: string) {
     await this.pool.query('UPDATE filled_scenarios SET run_id=$2, updated_at=now() WHERE id=$1', [id, runId]);
   }
+  async setProgress(id: string, progress: FillProgress) {
+    const updated = await this.pool.query(`UPDATE filled_scenarios SET progress=$2, updated_at=now()
+      WHERE id=$1 AND status='filling' AND COALESCE((progress->>'percent')::int, 0) <= $3`, [id, progress, progress.percent]);
+    if (updated.rowCount === 1) await this.notify(id);
+  }
+  async subscribe(id: string, signal: AbortSignal, emit: (progress: FillProgress) => void) {
+    await listenProgress(this.connectionString, id, signal, async () => {
+      const row = await this.scenario(id);
+      if (!row) return true;
+      emit(row.progress);
+      return row.status !== 'filling';
+    });
+  }
+  private async notify(id: string) {
+    await this.pool.query(`SELECT pg_notify('scenario_progress', $1)`, [id]);
+  }
   async markReady(id: string, content: ScenarioFill) {
     const updated = await this.pool.query(`UPDATE filled_scenarios SET status=CASE WHEN session_id IS NULL THEN 'ready' ELSE 'claimed' END,
-      content=$2, error=NULL, updated_at=now() WHERE id=$1 AND status='filling'`, [id, content]);
+      content=$2, error=NULL, progress=progress || $3::jsonb, updated_at=now() WHERE id=$1 AND status='filling'`,
+      [id, content, JSON.stringify({ phase: 'ready', percent: 100, label: readyProgress().label })]);
+    if (updated.rowCount === 1) await this.notify(id);
     return updated.rowCount === 1;
   }
   async markFailed(id: string, error: string) {
-    const updated = await this.pool.query(`UPDATE filled_scenarios SET status='failed', error=$2, updated_at=now()
-      WHERE id=$1 AND status='filling'`, [id, error]);
+    const updated = await this.pool.query(`UPDATE filled_scenarios SET status='failed', error=$2,
+      progress=jsonb_set(jsonb_set(progress, '{phase}', '"failed"'), '{label}', to_jsonb($3::text)), updated_at=now()
+      WHERE id=$1 AND status='filling'`, [id, error, 'The case could not be prepared.']);
+    if (updated.rowCount === 1) await this.notify(id);
     return updated.rowCount === 1;
   }
   async health() { await this.pool.query('SELECT 1 FROM filled_scenarios LIMIT 1'); }
@@ -111,14 +158,21 @@ export class PostgresScenarioStore implements ScenarioStore {
     const record = (await this.pool.query('SELECT * FROM filled_scenarios WHERE id=$1', [id])).rows[0];
     return record ? this.row(record) : null;
   }
+  async fillingCount(blueprintId: string) {
+    const count = (await this.pool.query(`SELECT count(*)::int AS depth FROM filled_scenarios
+      WHERE blueprint_id=$1 AND status='filling'`, [blueprintId])).rows[0].depth;
+    return count;
+  }
   async poolDepth(blueprintId: string) {
     const count = (await this.pool.query(`SELECT count(*)::int AS depth FROM filled_scenarios
       WHERE blueprint_id=$1 AND session_id IS NULL AND status IN ('ready','filling')`, [blueprintId])).rows[0].depth;
     return count;
   }
   async expireStale(beforeIso: string) {
-    const result = await this.pool.query(`UPDATE filled_scenarios SET status='failed', error='Fill timed out.', updated_at=now()
-      WHERE status='filling' AND updated_at < $1`, [beforeIso]);
+    const result = await this.pool.query(`UPDATE filled_scenarios SET status='failed', error='Fill timed out.',
+      progress=jsonb_set(jsonb_set(progress, '{phase}', '"failed"'), '{label}', to_jsonb('The case could not be prepared.'::text)),
+      updated_at=now() WHERE status='filling' AND updated_at < $1 RETURNING id`, [beforeIso]);
+    for (const row of result.rows) await this.notify(row.id);
     return result.rowCount ?? 0;
   }
   async withPoolLock<T>(work: () => Promise<T>): Promise<T> {

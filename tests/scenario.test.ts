@@ -6,12 +6,13 @@ import { OfflineAuthor } from '../src/adapters/offline-author.js';
 import { InlineFillRunner } from '../src/adapters/inline-fill-runner.js';
 import { ScenarioService } from '../src/application/scenario-service.js';
 import { defaultScenarioPrompt } from '../src/scenario/default-prompt.js';
-import { applyChoice, legalActions, openPlay } from '../src/scenario/engine.js';
+import { applyChoice, legalActions, openPlay, presentPlay } from '../src/scenario/engine.js';
 import { validateFill } from '../src/scenario/fill.js';
+import { fillInstructions } from '../src/scenario/fill-schema.js';
 import { offlineFill } from '../src/scenario/offline-fill.js';
 import { MemoryScenarioStore } from './scenario-memory.js';
 import { reservePoolFills } from '../src/application/reserve-pool.js';
-import { blueprintId, poolTarget } from '../src/scenario/blueprint.js';
+import { blueprintId, fillConcurrency, poolTarget } from '../src/scenario/blueprint.js';
 import { publishFill } from '../src/application/publish-fill.js';
 
 const secret = 's'.repeat(32);
@@ -19,9 +20,12 @@ const secret = 's'.repeat(32);
 test('fill validation rejects travel and invented excerpts', () => {
   const fill = offlineFill();
   assert.deepEqual(validateFill(fill, defaultScenarioPrompt), []);
-  fill.choices.transfer_account.label = 'Travel to the owner office';
+  fill.decide.verified.transfer_account = 'Travel to the owner office';
   assert.ok(validateFill(fill, defaultScenarioPrompt).some(error => error.includes('unrealistic')));
-  fill.choices.transfer_account.label = 'Transfer the account';
+  fill.decide.verified.transfer_account = 'Transfer the account';
+  fill.trust_result = 'You transfer the account to Priya.';
+  assert.ok(validateFill(fill, defaultScenarioPrompt).some(error => error.includes('must not move')));
+  fill.trust_result = 'You do not check the explanation.';
   fill.evidence.account_record.sourceExcerpt = 'A fact that was never in the source.';
   assert.ok(validateFill(fill, defaultScenarioPrompt).some(error => error.includes('excerpt')));
 });
@@ -63,6 +67,21 @@ test('every path ends in the ending written for that exact situation', () => {
   };
   walk(openPlay(fill), []);
   assert.deepEqual(reached, expectedEndings);
+});
+
+test('each question is one its three options can answer', () => {
+  const fill = offlineFill();
+  const opened = applyChoice(openPlay(fill), fill, 'open_record');
+  const checking = presentPlay('x', fill, opened);
+  assert.match(checking.stage, /wants the account moved without a check/);
+  assert.deepEqual(checking.available_actions.map(action => action.id), ['trace_owner', 'take_word', 'escalate_early']);
+  const verified = presentPlay('x', fill, applyChoice(opened, fill, 'trace_owner'));
+  assert.match(verified.stage, /The check shows .+ should own the account/);
+  assert.equal(verified.available_actions[0]!.label, fill.decide.verified.transfer_account);
+  const unverified = presentPlay('x', fill, applyChoice(opened, fill, 'take_word'));
+  assert.match(unverified.stage, /You have not checked who should own the account/);
+  assert.equal(unverified.available_actions[0]!.label, fill.decide.unverified.transfer_account);
+  assert.notEqual(verified.available_actions[0]!.label, unverified.available_actions[0]!.label);
 });
 
 test('investigation turns show what you found and set up the next question', () => {
@@ -153,13 +172,41 @@ test('an empty pool starts the player fill and then the pool parent', async () =
   assert.equal(scheduled, 1);
 });
 
-test('pool reservation stops at the target', async () => {
+test('the author writes the case the transcript is about', () => {
+  assert.match(fillInstructions, /this case is about the decision in that transcript/);
+  assert.equal(/identify the rightful new owner before any transfer/.test(fillInstructions), false);
+  assert.equal(/gives the customer the account immediately/.test(fillInstructions), false);
+});
+
+test('each reserved case receives its own transcript', async () => {
+  const previousTarget = process.env.SCENARIO_POOL_TARGET;
+  const previousConcurrency = process.env.SCENARIO_FILL_CONCURRENCY;
+  process.env.SCENARIO_POOL_TARGET = '3';
+  process.env.SCENARIO_FILL_CONCURRENCY = '3';
+  try {
+    const store = new MemoryScenarioStore();
+    const prompts = ['A deploy was frozen until someone approved the rollback.', 'Billing asked Security to confirm who can close the invoice.'];
+    const fills = await reservePoolFills(store, async () => prompts.shift() ?? defaultScenarioPrompt);
+    assert.equal(fills.length, 3);
+    assert.equal(fills[0]?.prompt, 'A deploy was frozen until someone approved the rollback.');
+    assert.equal(fills[1]?.prompt, 'Billing asked Security to confirm who can close the invoice.');
+    assert.notEqual(fills[0]?.prompt, fills[2]?.prompt);
+  } finally {
+    if (previousTarget === undefined) delete process.env.SCENARIO_POOL_TARGET;
+    else process.env.SCENARIO_POOL_TARGET = previousTarget;
+    if (previousConcurrency === undefined) delete process.env.SCENARIO_FILL_CONCURRENCY;
+    else process.env.SCENARIO_FILL_CONCURRENCY = previousConcurrency;
+  }
+});
+
+test('pool reservation stops at the concurrency cap', async () => {
   const store = new MemoryScenarioStore();
   const first = await reservePoolFills(store, async () => defaultScenarioPrompt);
   const second = await reservePoolFills(store, async () => defaultScenarioPrompt);
-  assert.equal(first.length, poolTarget);
+  const batch = Math.min(poolTarget(), fillConcurrency());
+  assert.equal(first.length, batch);
   assert.equal(second.length, 0);
-  assert.equal(await store.poolDepth(blueprintId), poolTarget);
+  assert.equal(await store.poolDepth(blueprintId), batch);
 });
 
 test('the game workflow replenishes by chaining fillScenario', async () => {
@@ -291,9 +338,14 @@ test('sign-in claims an in-flight pool fill instead of starting another', async 
   const service = new ScenarioService(store, author, runner, secret, null, { background: true, async schedule() {} });
   const scenarioId = randomUUID();
   await store.insertFilling(scenarioId, blueprintId, defaultScenarioPrompt, null);
-  setTimeout(() => { void store.markReady(scenarioId, offlineFill()); }, 40);
   const session = await service.signIn();
-  assert.equal(session.status, 'ready');
+  assert.equal(session.status, 'preparing');
+  assert.equal(session.progress.percent, 0);
+  assert.equal(session.progress.phase, 'queued');
   assert.equal(fills, 0);
+  await store.markReady(scenarioId, offlineFill());
+  const current = await service.current(session.session_token);
+  assert.equal(current.status, 'ready');
+  assert.equal(current.progress.percent, 100);
   assert.equal((await store.scenario(scenarioId))?.status, 'claimed');
 });

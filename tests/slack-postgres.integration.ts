@@ -57,6 +57,19 @@ test('slack transcripts persist redacted text and pending verdicts', async t => 
   const pending = await store.verdict('C100');
   assert.equal(pending?.status, 'pending');
   assert.equal(pending?.usable, true);
+  await store.saveOutcome({
+    conversationId: 'C300', kind: 'channel', status: 'stored', dropReason: null,
+    redactedText: 'Speaker A asked Security to approve a rollback before the deploy window closed.',
+    contentHash: 'c300', messageCount: 4, redactionCounts: {}, cursorTs: '9.0',
+  }, { conversationId: 'C300', usable: true, status: 'pending', reasons: [] });
+  const claimed = [await store.nextPrompt(), await store.nextPrompt()];
+  assert.deepEqual(claimed, [
+    (await store.get('C100'))?.redactedText,
+    'Speaker A asked Security to approve a rollback before the deploy window closed.',
+  ]);
+  assert.equal((await store.verdict('C100'))?.status, 'used');
+  assert.equal((await store.verdict('C300'))?.status, 'used');
+  assert.equal(await store.nextPrompt(), null);
   assert.equal((await store.get('C200'))?.redactedText, null);
   await assert.rejects(store.pool.query(`INSERT INTO slack_conversations(
       conversation_id, kind, status, drop_reason, redacted_text, content_hash, message_count, redaction_counts, cursor_ts)

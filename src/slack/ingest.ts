@@ -55,10 +55,11 @@ export class SlackIngestService {
       return this.drop(ref, redacted.dropReason ?? 'sensitive_content', redacted.counts, cursor);
     }
     const decision = classifyTranscript(redacted.text, redacted.messageCount, redacted.speakerCount);
+    const status = decision.usable ? 'pending' as const : 'rejected' as const;
     const verdict: Verdict = {
       conversationId: ref.conversationId,
       usable: decision.usable,
-      status: decision.usable ? 'pending' : 'rejected',
+      status,
       reasons: decision.reasons,
     };
     await this.store.saveOutcome({
@@ -67,7 +68,7 @@ export class SlackIngestService {
       redactionCounts: redacted.counts, cursorTs: cursor,
     }, verdict);
     this.report(decision.usable ? 'slack_transcript_pending' : 'slack_transcript_rejected');
-    return { conversationId: ref.conversationId, status: 'stored', verdict: verdict.status };
+    return { conversationId: ref.conversationId, status: 'stored', verdict: status };
   }
 
   private async drop(ref: ConversationRef, reason: string, counts: Record<string, number>, cursor: string): Promise<IngestResult> {

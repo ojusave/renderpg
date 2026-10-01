@@ -3,7 +3,7 @@ import { reservePoolFills, type PoolFill } from '../application/reserve-pool.js'
 import type { ScenarioStore } from '../application/scenario-ports.js';
 import { defaultScenarioPrompt } from '../scenario/default-prompt.js';
 
-/** Reserves pool fills, grounding each one in the longest usable transcript. */
+/** Reserves pool fills, giving each one a different unused transcript. */
 export async function reserveGamePool(store: ScenarioStore): Promise<PoolFill[]> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) throw new Error('DATABASE_URL is required');

@@ -45,7 +45,7 @@ export interface StoredConversation {
 export interface Verdict {
   conversationId: string;
   usable: boolean;
-  status: 'pending' | 'rejected';
+  status: 'pending' | 'rejected' | 'used';
   reasons: string[];
 }
 

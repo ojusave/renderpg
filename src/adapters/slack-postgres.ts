@@ -13,6 +13,13 @@ interface ConversationRecord {
   cursor_ts: string;
 }
 
+/** Keeps a claimed transcript inside the author prompt limit. */
+function clipTranscript(text: string): string {
+  if (text.length <= 2500) return text;
+  const cut = text.lastIndexOf('\n', 2500);
+  return text.slice(0, cut > 200 ? cut : 2500);
+}
+
 /** Stores redacted transcripts. The table constraint rejects raw bodies on dropped rows. */
 export class PostgresTranscriptStore implements TranscriptStore {
   readonly pool: pg.Pool;
@@ -67,20 +74,30 @@ export class PostgresTranscriptStore implements TranscriptStore {
     }
   }
 
-  /** Returns one redacted transcript the scenario agent can ground a game in. */
+  /** Claims the oldest unused transcript so the next case is a different story. */
   async nextPrompt(): Promise<string | null> {
+    const client = await this.pool.connect();
     try {
-      const record = (await this.pool.query<{ redacted_text: string }>(`SELECT c.redacted_text FROM slack_conversations c
+      await client.query('BEGIN');
+      const picked = (await client.query<{ redacted_text: string; conversation_id: string }>(`SELECT c.conversation_id, c.redacted_text
+        FROM slack_conversations c
         JOIN slack_verdicts v ON v.conversation_id = c.conversation_id
         WHERE v.usable = true AND v.status = 'pending' AND c.redacted_text IS NOT NULL
-        ORDER BY c.message_count DESC, c.updated_at DESC LIMIT 1`)).rows[0];
-      const text = record?.redacted_text;
-      if (!text) return null;
-      if (text.length <= 2500) return text;
-      const cut = text.lastIndexOf('\n', 2500);
-      return text.slice(0, cut > 200 ? cut : 2500);
+        ORDER BY c.updated_at ASC, c.conversation_id ASC
+        FOR UPDATE OF v SKIP LOCKED
+        LIMIT 1`)).rows[0];
+      if (!picked) {
+        await client.query('COMMIT');
+        return null;
+      }
+      await client.query(`UPDATE slack_verdicts SET status='used', updated_at=now() WHERE conversation_id=$1`, [picked.conversation_id]);
+      await client.query('COMMIT');
+      return clipTranscript(picked.redacted_text);
     } catch {
+      await client.query('ROLLBACK');
       return null;
+    } finally {
+      client.release();
     }
   }
 

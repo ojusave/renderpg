@@ -16,7 +16,7 @@ export class MemoryTranscriptStore implements TranscriptStore {
   async saveOutcome(row: StoredConversation, verdict: Verdict) {
     if (row.status === 'dropped' && (row.redactedText !== null || row.contentHash !== null)) throw new Error('dropped row stored text');
     if (row.status === 'stored' && (row.redactedText === null || row.contentHash === null)) throw new Error('stored row missing text');
-    if (verdict.usable !== (verdict.status === 'pending')) throw new Error('usable verdicts must stay pending');
+    if (verdict.usable !== (verdict.status === 'pending' || verdict.status === 'used')) throw new Error('usable verdicts must stay pending or used');
     if (verdict.conversationId !== row.conversationId) throw new Error('verdict conversation mismatch');
     this.rows.set(row.conversationId, row);
     this.verdicts.set(verdict.conversationId, verdict);

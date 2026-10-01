@@ -70,6 +70,6 @@ For an offline completion smoke test, start the API with `AI_MODE=offline`, then
 
 ## Scope
 
-Structured schemas constrain shape, references, and reachability—not semantic truth. Prompts must be curated before submission. Notion ingestion, user identity, streaming, multiplayer, and actions against real Render systems are out of scope. Slack ingest stores redacted candidates only, and a pending verdict does not create a game.
+Structured schemas constrain shape, references, and reachability—not semantic truth. Prompts must be curated before submission. Notion ingestion, user identity, streaming, multiplayer, and actions against real Render systems are out of scope. A new case claims one pending Slack transcript, marks it used, and the case is about that transcript. Rejected and dropped transcripts are not used.
 
 `render.yaml` defines the Render Web Service, private Postgres connection, secrets, migrations, health check, and preview environments.

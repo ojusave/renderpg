@@ -7,6 +7,7 @@ import { AppError } from '../application/errors.js';
 import type { GameRepository } from '../application/ports.js';
 import { contract, routeSchema } from './contract.js';
 import { oktaRequired, verifyEmployeeToken } from './okta.js';
+import { registerProgress } from './progress-route.js';
 
 export function buildApp(service: GameService, repo: GameRepository, logging = false, scenarios?: ScenarioService) {
   const app = Fastify({ logger: logging ? { redact: ['req.headers.authorization', 'req.headers.idempotency-key', 'req.headers["x-forwarded-access-token"]'] } : false, bodyLimit: 16384 });
@@ -57,6 +58,7 @@ export function buildApp(service: GameService, repo: GameRepository, logging = f
   app.get<{ Params: { game_id: string } }>('/games/:game_id',
     { schema: routeSchema('/games/{game_id}', 'get') }, async request => service.get(request.params.game_id, bearer(request.headers.authorization)));
   if (scenarios) {
+    registerProgress(app, scenarios);
     app.post('/sessions', { schema: routeSchema('/sessions', 'post') }, async () => scenarios.signIn());
     app.delete('/sessions/current', { schema: routeSchema('/sessions/current', 'delete') }, async request => {
       await scenarios.end(bearer(request.headers.authorization));

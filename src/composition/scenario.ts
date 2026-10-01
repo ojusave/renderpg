@@ -4,6 +4,7 @@ import { PostgresScenarioStore } from '../adapters/scenario-postgres.js';
 import { PostgresTranscriptStore } from '../adapters/slack-postgres.js';
 import { RenderFillRunner } from '../adapters/render-fill-runner.js';
 import { RenderPoolScheduler } from '../adapters/render-pool-scheduler.js';
+import { RenderTaskStatus } from '../adapters/render-task-status.js';
 import { ScenarioService } from '../application/scenario-service.js';
 import { createScenarioAuthor } from './author.js';
 
@@ -24,6 +25,7 @@ export function composeScenario(sharedPool?: pg.Pool) {
   const scheduler = workflowMode === 'render'
     ? new RenderPoolScheduler(required('REPLENISH_TASK'), required('RENDER_API_KEY'))
     : undefined;
+  const runs = workflowMode === 'render' ? new RenderTaskStatus(required('RENDER_API_KEY')) : undefined;
   const prompts = new PostgresTranscriptStore(required('DATABASE_URL'), sharedPool);
-  return { service: new ScenarioService(store, author, runner, required('SESSION_SECRET'), prompts, scheduler), store, prompts };
+  return { service: new ScenarioService(store, author, runner, required('SESSION_SECRET'), prompts, scheduler, runs), store, prompts };
 }

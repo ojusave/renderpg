@@ -4,6 +4,22 @@ import type { GameView, Turn } from '../game/types.js';
 import { accountOwnershipBlueprint, type ActionId, type EndingId, type EvidenceId, type StageId } from './blueprint.js';
 import type { ScenarioFill } from './fill.js';
 
+/** The question on screen. It changes with the stage so every listed option answers it. */
+export function stageQuestion(fill: ScenarioFill, stage: StageId, verified: boolean): string {
+  if (stage === 'investigate') return fill.questions.investigate;
+  if (stage === 'decide' && verified) return fill.questions.decide_verified;
+  if (stage === 'decide') return fill.questions.decide_unverified;
+  return stage === 'intake' ? 'What do you do first?' : 'Resolution';
+}
+
+/** The option label for this action in the current state. The last question has two wordings. */
+export function choiceLabel(fill: ScenarioFill, action: ActionId, verified: boolean): string {
+  if (action === 'transfer_account' || action === 'decline_transfer' || action === 'escalate') {
+    return fill.decide[verified ? 'verified' : 'unverified'][action];
+  }
+  return fill.choices[action].label;
+}
+
 export interface PlayState {
   stage: StageId;
   revealed: EvidenceId[];
@@ -116,14 +132,15 @@ export function applyChoice(state: PlayState, fill: ScenarioFill, action: Action
 /** Projects a play-through into the existing game view. */
 export function presentPlay(playId: string, fill: ScenarioFill, state: PlayState): GameView {
   const stage = accountOwnershipBlueprint.stages.find(item => item.id === state.stage)!;
+  const question = stageQuestion(fill, state.stage, state.verified);
   const evidence = state.revealed.map(id => fill.evidence[id].text).join('\n');
   const ending = state.endingId ? { id: state.endingId, result: endingResult[state.endingId], ...fill.endings[state.endingId] } : null;
   return {
     id: playId, version: state.version, status: state.status, title: fill.title, objective: fill.objective,
-    location: { id: stage.id, name: stage.label, description: evidence ? `${fill.briefing}\n${evidence}` : fill.briefing },
+    location: { id: stage.id, name: question, description: evidence ? `${fill.briefing}\n${evidence}` : fill.briefing },
     visible_entities: state.revealed.map(id => ({ id, name: fill.evidence[id].text.slice(0, 80), kind: 'clue' })),
-    inventory: [], available_actions: legalActions(state).map(id => ({ id, label: fill.choices[id].label, command: id })),
-    stage: stage.label, ending, transcript: state.transcript, stats: state.stats, stat_changes: state.lastChanges,
+    inventory: [], available_actions: legalActions(state).map(id => ({ id, label: choiceLabel(fill, id, state.verified), command: id })),
+    stage: question, ending, transcript: state.transcript, stats: state.stats, stat_changes: state.lastChanges,
     turn: state.used.length, turn_budget: 3, choice_tally: state.tally,
   };
 }
