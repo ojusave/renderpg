@@ -1,10 +1,10 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { mkdtemp, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { oktaIdentity } from "../src/identity";
+import { workEmail } from "../src/identity";
 import { DiskFileStore } from "../src/media/disk";
+import { GoogleDriveHost, type FetchLike } from "../src/media/google-drive";
 import { sweepOrphans } from "../src/media/sweep";
 import { MemorySubmissionStore } from "../src/submissions/memory";
 import { makeSlug, teamKey } from "../src/submissions/slug";
@@ -57,26 +57,38 @@ describe("DiskFileStore", async () => {
   });
 });
 
-describe("oktaIdentity", async () => {
-  const { publicKey, privateKey } = await generateKeyPair("RS256");
-  const jwk = { ...(await exportJWK(publicKey)), kid: "k1", alg: "RS256", use: "sig" };
-  const server = Bun.serve({ port: 0, fetch: () => Response.json({ keys: [jwk] }) });
-  afterAll(() => server.stop());
-  const issuer = "https://render.okta.com";
-  const identity = oktaIdentity({ issuer, jwksUrl: `http://localhost:${server.port}/keys`, emailDomain: "render.com" });
-  const token = (sub: string, iss = issuer) =>
-    new SignJWT({}).setProtectedHeader({ alg: "RS256", kid: "k1" }).setSubject(sub).setIssuer(iss).setExpirationTime("5m").sign(privateKey);
-  const whoIs = async (t?: string) => identity.whoIs(new Request("http://x", { headers: t ? { "x-forwarded-access-token": t } : {} }));
+describe("workEmail", () => {
+  test("accepts only plain @render.com addresses", () => {
+    expect(workEmail(" Curie@Render.com ", "render.com")).toBe("curie@render.com");
+    expect(workEmail("eve@example.com", "render.com")).toBeNull();
+    expect(workEmail("eve@notrender.com", "render.com")).toBeNull();
+    expect(workEmail("a@b@render.com", "render.com")).toBeNull();
+    expect(workEmail("@render.com", "render.com")).toBeNull();
+    expect(workEmail(undefined, "render.com")).toBeNull();
+  });
+});
 
-  test("accepts a valid Render token", async () => {
-    expect(await whoIs(await token("Curie@render.com"))).toEqual({ status: "signed_in", email: "curie@render.com" });
-  });
-  test("treats a missing token as anonymous", async () => {
-    expect((await whoIs()).status).toBe("anonymous");
-  });
-  test("rejects other domains, wrong issuers, and garbage", async () => {
-    expect((await whoIs(await token("eve@example.com"))).status).toBe("rejected");
-    expect((await whoIs(await token("curie@render.com", "https://evil.okta.com"))).status).toBe("rejected");
-    expect((await whoIs("not-a-jwt")).status).toBe("rejected");
+describe("GoogleDriveHost", () => {
+  const auth = { clientId: "id", clientSecret: "secret", refreshToken: "refresh", folderId: "folder" };
+
+  test("uploads, shares for playback, and deletes", async () => {
+    const calls: string[] = [];
+    const fetchImpl: FetchLike = async (url, init) => {
+      const target = String(url);
+      calls.push(`${init?.method} ${target}`);
+      if (target.includes("oauth2.googleapis.com")) return Response.json({ access_token: "token", expires_in: 3600 });
+      if (target.includes("uploadType=resumable")) return new Response(null, { status: 200, headers: { location: "https://upload.example/session" } });
+      if (target === "https://upload.example/session") return Response.json({ id: "driveFileId1" });
+      if (target.includes("/permissions")) return new Response(null, { status: 200 });
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      return new Response("missing", { status: 500 });
+    };
+    const drive = new GoogleDriveHost(auth, fetchImpl);
+    const saved = await drive.save({ name: "pitch.mp4", mime: "video/mp4", body: stream(4), bytes: 4 });
+    expect(saved.id).toBe("driveFileId1");
+    expect(calls.some((call) => call.includes("/permissions"))).toBe(true);
+    await drive.remove(saved.id);
+    expect(calls.at(-1)).toContain("DELETE");
+    expect(calls.filter((call) => call.includes("oauth2.googleapis.com"))).toHaveLength(1);
   });
 });

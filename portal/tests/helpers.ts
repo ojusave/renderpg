@@ -2,18 +2,19 @@ import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import type { Identity, Who } from "../src/identity";
 import { MemoryFileStore } from "../src/media/memory";
+import { MemoryVideoHost, type VideoHost } from "../src/media/video";
 import { MemorySubmissionStore } from "../src/submissions/memory";
 
 /** Builds the app with in-memory fakes and a switchable identity. */
-export function testApp(env: Record<string, string> = {}) {
+export function testApp(env: Record<string, string> = {}, videos: VideoHost = new MemoryVideoHost(), realIdentity?: Identity) {
   const config = loadConfig(env);
   const submissions = new MemorySubmissionStore();
   const files = new MemoryFileStore();
   let who: Who = { status: "signed_in", email: "curie@render.com" };
-  const identity: Identity = { whoIs: async () => who };
-  const app = createApp({ config, submissions, files, identity });
+  const identity: Identity = realIdentity ?? { whoIs: async () => who };
+  const app = createApp({ config, submissions, files, videos, identity });
   const req = (path: string, init?: RequestInit) => app.request(`http://test${path}`, init);
-  return { app, req, submissions, files, setWho: (w: Who) => (who = w) };
+  return { app, req, submissions, files, videos, setWho: (w: Who) => (who = w) };
 }
 
 export const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]);

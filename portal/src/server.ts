@@ -1,8 +1,10 @@
 import { createApp } from "./app";
 import { loadConfig } from "./config";
-import { devIdentity, oktaIdentity } from "./identity";
+import { emailCookieIdentity } from "./identity";
 import { DiskFileStore } from "./media/disk";
+import { GoogleDriveHost } from "./media/google-drive";
 import { sweepOrphans } from "./media/sweep";
+import { UnavailableVideoHost } from "./media/video";
 import { MemorySubmissionStore } from "./submissions/memory";
 import { PostgresSubmissionStore } from "./submissions/postgres";
 
@@ -12,12 +14,18 @@ if (!config.databaseUrl && process.env.RENDER) throw new Error("DATABASE_URL is 
 const submissions = config.databaseUrl ? PostgresSubmissionStore.connect(config.databaseUrl) : new MemorySubmissionStore();
 const files = new DiskFileStore(config.mediaDir);
 await files.init();
-const identity =
-  config.authMode === "dev"
-    ? devIdentity(config.devEmail)
-    : oktaIdentity({ issuer: config.oktaIssuer, jwksUrl: config.oktaJwksUrl, emailDomain: config.emailDomain });
+const videos =
+  config.googleClientId && config.googleClientSecret && config.googleRefreshToken
+    ? new GoogleDriveHost({
+        clientId: config.googleClientId,
+        clientSecret: config.googleClientSecret,
+        refreshToken: config.googleRefreshToken,
+        folderId: config.googleDriveFolderId,
+      })
+    : new UnavailableVideoHost();
+const identity = emailCookieIdentity(config.emailDomain);
 
-const app = createApp({ config, submissions, files, identity });
+const app = createApp({ config, submissions, files, videos, identity });
 
 const sweep = () =>
   sweepOrphans(files, submissions)
@@ -26,5 +34,5 @@ const sweep = () =>
 setTimeout(sweep, 60_000);
 setInterval(sweep, 6 * 60 * 60 * 1000);
 
-Bun.serve({ hostname: "0.0.0.0", port: config.port, fetch: app.fetch, idleTimeout: 120, maxRequestBodySize: config.maxVideoBytes + 1024 * 1024 });
-console.log(`Science Fair listening on 0.0.0.0:${config.port} (auth: ${config.authMode}, store: ${config.databaseUrl ? "postgres" : "memory"})`);
+Bun.serve({ hostname: "0.0.0.0", port: config.port, fetch: app.fetch, idleTimeout: 255, maxRequestBodySize: config.maxVideoBytes + 1024 * 1024 });
+console.log(`Science Fair listening on 0.0.0.0:${config.port} (store: ${config.databaseUrl ? "postgres" : "memory"})`);

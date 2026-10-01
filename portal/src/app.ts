@@ -3,12 +3,14 @@ import { serveStatic } from "hono/bun";
 import type { Config } from "./config";
 import type { Identity } from "./identity";
 import type { FileStore } from "./media/types";
+import type { VideoHost } from "./media/video";
 import { editorRoutes } from "./routes/editor";
 import { publicRoutes } from "./routes/public";
+import { signinRoutes } from "./routes/signin";
 import type { SubmissionStore } from "./submissions/types";
 import { messagePage, unavailablePage } from "./ui/gallery";
 
-export type Deps = { config: Config; submissions: SubmissionStore; files: FileStore; identity: Identity };
+export type Deps = { config: Config; submissions: SubmissionStore; files: FileStore; videos: VideoHost; identity: Identity };
 
 export type ApiError = { error: { code: string; message: string } };
 
@@ -23,6 +25,7 @@ export function createApp(deps: Deps) {
   app.use("/assets/*", serveStatic({ root: `${import.meta.dir}/../public`, rewriteRequestPath: (p) => p.replace(/^\/assets/, "") }));
 
   app.route("/", publicRoutes(deps));
+  app.route("/", signinRoutes(deps));
   app.route("/", editorRoutes(deps));
 
   app.notFound((c) =>

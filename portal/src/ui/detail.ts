@@ -1,3 +1,4 @@
+import { drivePreviewUrl } from "../media/video";
 import type { Config } from "../config";
 import type { Submission } from "../submissions/types";
 import { elementTile } from "./elements";
@@ -46,7 +47,9 @@ export function detailPage(config: Config, s: Submission, notice?: string): stri
 
     <div class="evidence ${s.video ? "" : "evidence-single"}">
       ${s.video
-        ? html`<figure><video src="/media/${s.video}" controls preload="metadata" playsinline></video><figcaption>Video pitch</figcaption></figure>`
+        ? drivePreviewUrl(s.video)
+          ? html`<figure class="pitch-frame"><iframe class="pitch" src="${drivePreviewUrl(s.video)}" title="Video pitch for ${s.projectName}" allow="autoplay; fullscreen" allowfullscreen></iframe><figcaption>Video pitch</figcaption></figure>`
+          : html`<figure><video src="/media/${s.video}" controls preload="metadata" playsinline></video><figcaption>Video pitch</figcaption></figure>`
         : ""}
       <figure><img src="/media/${s.teamPhoto}" alt="${s.teamName} team photo" loading="lazy"><figcaption>The lab group: ${s.teamName}</figcaption></figure>
     </div>

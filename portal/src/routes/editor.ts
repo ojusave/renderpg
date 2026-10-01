@@ -1,11 +1,12 @@
 import { Hono, type Context } from "hono";
 import { createMiddleware } from "hono/factory";
 import type { ApiError, Deps } from "../app";
+import { DRIVE_FILE } from "../media/video";
 import type { MediaKind, Submission, SubmissionInput } from "../submissions/types";
 import { toFormValues, validateSubmission, type FieldErrors, type FormValues } from "../submissions/validate";
 import { formPage } from "../ui/form";
 import { messagePage } from "../ui/gallery";
-import { uploadHandler } from "./uploads";
+import { removeStored, uploadHandler } from "./uploads";
 
 type Env = { Variables: { email: string } };
 
@@ -28,16 +29,9 @@ export function editorRoutes(deps: Deps) {
       c.set("email", who.email);
       return next();
     }
-    if (who.status === "anonymous") {
-      if (api) return c.json<ApiError>({ error: { code: "unauthorized", message: "Your session expired. Reload the page to sign in again." } }, 401);
-      if (c.req.query("signin") === undefined) return c.redirect(`/oauth2/start?rd=${encodeURIComponent(`${c.req.path}?signin`)}`);
-      console.error(`no access token after Okta sign-in on ${c.req.path}; check authentication.excludedEndpoints`);
-      return c.html(messagePage(config, "Sign-in didn't reach the app.", "Okta signed you in, but this page didn't receive your session. Ask the portal owner to check the login settings."), 503);
-    }
-    console.warn(`rejected sign-in on ${c.req.path}: ${who.reason}`);
-    return api
-      ? c.json<ApiError>({ error: { code: "forbidden", message: "Only Render accounts can submit." } }, 403)
-      : c.html(messagePage(config, "We couldn't verify your sign-in.", "Submitting is open to Render employees signed in with Okta."), 403);
+    if (api) return c.json<ApiError>({ error: { code: "unauthorized", message: "Enter your Render email again. Reload the page to continue." } }, 401);
+    const back = c.req.method === "GET" ? c.req.path : "/submit";
+    return c.redirect(`/signin?next=${encodeURIComponent(back)}`);
   });
 
   app.use("/submit", requireEditor);
@@ -69,7 +63,9 @@ export function editorRoutes(deps: Deps) {
     for (const [field, file, kind] of checks) {
       if (!file) continue;
       const upload = await deps.submissions.upload(file);
-      if (!upload || upload.kind !== kind || upload.createdBy.toLowerCase() !== email.toLowerCase() || !(await deps.files.open(file))) {
+      const stored = Boolean(upload && upload.kind === kind && upload.createdBy.toLowerCase() === email.toLowerCase());
+      const present = stored && (DRIVE_FILE.test(file) || Boolean(await deps.files.open(file)));
+      if (!present) {
         errors[field] = "That upload is missing. Please add the file again.";
       }
     }
@@ -126,7 +122,7 @@ export function editorRoutes(deps: Deps) {
     await Promise.all(
       [deleted.teamPhoto, deleted.posterPhoto, deleted.video]
         .filter((file): file is string => !!file)
-        .map((file) => deps.files.remove(file).catch((error) => console.warn(`could not remove ${file}:`, error))),
+        .map((file) => removeStored(deps, file).catch((error) => console.warn(`could not remove ${file}:`, error))),
     );
     return c.redirect("/?deleted=1", 303);
   });

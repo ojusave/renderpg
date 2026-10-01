@@ -8,11 +8,12 @@ export type PageOptions = {
   config: Config;
   description?: string;
   script?: string;
+  css?: string;
   showSubmit?: boolean;
 };
 
 /** Wraps page content in the shared document, header, and footer. */
-export function layout({ title, body, config, description, script, showSubmit = true }: PageOptions): string {
+export function layout({ title, body, config, description, script, css, showSubmit = true }: PageOptions): string {
   const v = config.assetVersion;
   return `<!doctype html>${html`<html lang="en">
 <head>
@@ -22,6 +23,7 @@ export function layout({ title, body, config, description, script, showSubmit = 
   <meta name="description" content="${description ?? "Every experiment from Rendervous Maker Day 2026."}">
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/app.css?v=${v}">
+  ${css ? html`<link rel="stylesheet" href="/assets/${css}?v=${v}">` : ""}
   ${script ? html`<link rel="stylesheet" href="/assets/${script.replace(/\.js$/, ".css")}?v=${v}"><script type="module" src="/assets/${script}?v=${v}"></script>` : ""}
 </head>
 <body>

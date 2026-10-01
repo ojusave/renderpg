@@ -1,3 +1,4 @@
+import { drivePreviewUrl } from "../media/video";
 import type { Config } from "../config";
 import type { FieldErrors, FormValues } from "../submissions/validate";
 import { html, type SafeHtml } from "./html";
@@ -42,9 +43,11 @@ function drop(state: FormState, name: Name, label: string, kind: "team" | "poste
       <input class="drop-input" id="${name}-file" type="file" accept="${accept}" aria-describedby="${name}-error">
       <label class="drop-target" for="${name}-file">
         <span class="drop-preview">${current
-          ? kind === "video"
-            ? html`<video src="/media/${current}" muted playsinline preload="metadata"></video>`
-            : html`<img src="/media/${current}" alt="">`
+          ? drivePreviewUrl(current)
+            ? html`<span class="pitch-mark" aria-hidden="true">▶</span>`
+            : kind === "video"
+              ? html`<video src="/media/${current}" muted playsinline preload="metadata"></video>`
+              : html`<img src="/media/${current}" alt="">`
           : ""}</span>
         <span class="drop-copy"><strong>${current ? "Replace" : "Choose or drop a file"}</strong><span>${hint}</span></span>
       </label>
@@ -66,7 +69,9 @@ export function formPage(config: Config, state: FormState): string {
   const body = html`<div class="wrap form-wrap">
     <a class="back" href="/">← All experiments</a>
     <h1>${editing ? "Edit your experiment" : "Log your experiment"}</h1>
-    <p class="lede">Signed in as <strong>${state.email}</strong>. You can publish one experiment, then edit or delete it here.</p>
+    <p class="lede">Submitting as <strong>${state.email}</strong>. You can publish one experiment, then edit or delete it here.
+      <button class="link-quiet" type="submit" form="signout">Not you?</button></p>
+    <form id="signout" method="post" action="/signout" hidden></form>
     ${state.notice ? html`<div class="notice notice-ok" role="status">${state.notice}</div>` : ""}
     ${state.teamTaken
       ? html`<div class="notice" role="alert">${state.values.teamName} already logged “${state.teamTaken.projectName}”.
@@ -81,7 +86,7 @@ export function formPage(config: Config, state: FormState): string {
       ${step("02", "The evidence", [
         drop(state, "posterPhoto", "Photo of your poster", "poster", "The whole trifold, straight on. JPG, PNG, or WebP."),
         drop(state, "teamPhoto", "Team photo", "team", "Lab coats and goggles encouraged."),
-        drop(state, "video", "Video pitch", "video", "MP4, WebM, or MOV, up to " + Math.round(config.maxVideoBytes / 1048576) + " MB.", false),
+        drop(state, "video", "Video pitch", "video", "MP4, WebM, or MOV, up to " + Math.round(config.maxVideoBytes / 1048576) + " MB. It plays on this site.", false),
       ])}
       ${step("03", "The findings", [
         text(state, "hypothesis", "Hypothesis", { placeholder: "If we…, then…", multiline: true }),

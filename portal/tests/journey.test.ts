@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { MemoryVideoHost } from "../src/media/video";
 import { form, testApp, uploadFile, validForm } from "./helpers";
 
 describe("gallery journey", () => {
@@ -109,6 +110,21 @@ describe("gallery journey", () => {
     expect(responses.every((r) => r.status === 303)).toBe(true);
     expect(responses.filter((r) => r.headers.get("location")?.includes("notice=one"))).toHaveLength(1);
     expect((await submissions.list(10, 0)).total).toBe(1);
+  });
+
+  test("a video pitch plays inside the project page and is removed with it", async () => {
+    const videos = new MemoryVideoHost();
+    const { req } = testApp({}, videos);
+    const video = await uploadFile(req, "video", "video/mp4", new Uint8Array(8));
+    expect(video.file).toMatch(/^gdrive:[a-z0-9]+$/);
+    const created = await req("/submit", form(await validForm(req, { video: video.file })));
+    const page = await (await req(created.headers.get("location")!)).text();
+    const id = video.file.slice("gdrive:".length);
+    expect(page).toContain(`https://drive.google.com/file/d/${id}/preview`);
+    expect(page).toContain("<iframe");
+    const slug = created.headers.get("location")!.split("/p/")[1]!.split("?")[0]!;
+    expect((await req(`/delete/${slug}`, { method: "POST" })).status).toBe(303);
+    expect(videos.files.has(id)).toBe(false);
   });
 
   test("rejects a photo slot pointing at a video or unknown file", async () => {

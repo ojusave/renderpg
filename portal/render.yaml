@@ -1,5 +1,5 @@
 # Maker Day Science Fair: deploy into the Maker Day 2026 workspace.
-# Blueprint path: portal/render.yaml. Okta client secret is set in the Dashboard, never here.
+# Blueprint path: portal/render.yaml. Google Drive secrets are set in the Dashboard, never here.
 projects:
   - name: maker-day-science-fair
     environments:
@@ -21,21 +21,6 @@ projects:
               name: media
               mountPath: /var/data
               sizeGB: 10
-            # Okta login (early access). pathPattern is a regex (oauth2-proxy skip-auth route).
-            # Public: gallery, project pages, media, assets, health. Submit, edit, and upload
-            # stay behind Okta, and the app verifies X-Forwarded-Access-Token on every write.
-            authentication:
-              enabled: true
-              excludedEndpoints:
-                - pathPattern: "/$"
-                  method: GET
-                - pathPattern: "/p/"
-                  method: GET
-                - pathPattern: "/media/"
-                  method: GET
-                - pathPattern: "/assets/"
-                  method: GET
-                - pathPattern: "/health$"
             envVars:
               - key: BUN_VERSION
                 value: 1.3.6

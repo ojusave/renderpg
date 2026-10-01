@@ -1,6 +1,6 @@
 import type { MediaKind } from "../submissions/types";
 
-/** Storage port for uploaded photos and videos. */
+/** Storage port for uploaded photos. Video pitches use VideoHost. */
 export interface FileStore {
   save(name: string, body: ReadableStream<Uint8Array>, maxBytes: number): Promise<{ ok: true; bytes: number } | { ok: false; error: "too_large" }>;
   open(name: string): Promise<Blob | null>;
