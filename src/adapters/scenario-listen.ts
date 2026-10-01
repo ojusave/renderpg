@@ -22,6 +22,7 @@ export async function listenProgress(
     };
     client.on('notification', message => { if (message.payload === id) void pull().catch(() => undefined); });
     await pull();
+    if (abort.signal.aborted) return;
     timer = setInterval(() => { void pull().catch(() => undefined); }, 400);
     await new Promise<void>(resolve => abort.signal.addEventListener('abort', () => resolve(), { once: true }));
   } finally {
