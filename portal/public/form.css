@@ -1,0 +1,54 @@
+/* Submit/edit form: a lab notebook with three protocol steps and a sticky checklist. */
+.form-wrap { max-width: 760px; }
+.form-wrap h1 { font-size: clamp(32px, 5vw, 48px); }
+.notice { margin-top: 24px; padding: 12px 16px; border-radius: 8px; background: var(--offsite); color: var(--offsite-ink); font-size: 14px; }
+.notice a { font-weight: 600; }
+.notice-ok { background: var(--lab); color: var(--lab-ink); }
+.notebook { margin-top: 32px; display: grid; gap: 24px; }
+.step { margin: 0; padding: 28px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; display: grid; gap: 22px; min-width: 0; }
+.step legend { float: left; width: 100%; display: flex; align-items: center; gap: 12px; padding: 0; font-weight: 600; font-size: 18px; letter-spacing: -.01em; }
+.step legend + * { clear: both; }
+.step-n { font: 600 12px var(--mono); padding: 4px 7px; border-radius: 4px; background: var(--lab); color: var(--lab-ink); border: 1px solid currentColor; }
+.field { display: grid; gap: 6px; }
+.field label, .field .label { font-weight: 500; font-size: 14px; } .label em { font-style: normal; color: var(--muted); font-weight: 400; }
+.hint { margin: -2px 0 2px; font-size: 13px; color: var(--muted); }
+input[type="text"], input[type="url"], textarea { width: 100%; font: 15px/1.5 var(--sans); color: var(--ink); background: var(--card); border: 1px solid var(--line-strong); border-radius: 6px; padding: 10px 12px;
+  transition: border-color .15s ease, box-shadow .15s ease; }
+textarea { resize: vertical; min-height: 120px; }
+input:focus, textarea:focus { outline: none; border-color: var(--ink); box-shadow: 0 0 0 3px rgba(18, 18, 18, .08); }
+[aria-invalid="true"] { border-color: var(--danger) !important; }
+.field-error { margin: 0; font-size: 13px; color: var(--danger); } .field-error a { color: inherit; font-weight: 600; }
+
+/* Drop zones: instant preview, then upload progress */
+.drop { position: relative; border: 1.5px dashed var(--line-strong); border-radius: 8px; background: #fcfbf8; transition: border-color .15s ease, background-color .15s ease; }
+.drop.dragging { border-color: var(--ink); background: #f4f2ea; }
+.drop.has-file { border-style: solid; }
+.drop.is-error { border-color: var(--danger); }
+.drop-input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.drop-input:focus-visible + .drop-target { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 8px; }
+.drop-target { display: flex; align-items: center; gap: 16px; padding: 14px; cursor: pointer; }
+.drop-preview { flex: none; width: 96px; height: 72px; border-radius: 6px; background: #efece3; overflow: hidden; display: grid; place-items: center; }
+.drop-preview:empty::before { content: "+"; font: 300 28px var(--sans); color: var(--muted); }
+.drop-preview img, .drop-preview video { width: 100%; height: 100%; object-fit: cover; animation: enter .3s var(--ease) both; }
+.drop-copy { display: grid; gap: 2px; font-size: 14px; } .drop-copy span { color: var(--muted); font-size: 13px; }
+.drop-status { display: flex; align-items: center; gap: 12px; padding: 0 14px 12px; font: 12px var(--mono); color: var(--muted); }
+.drop-status:has(.drop-msg:empty) { display: none; }
+.drop.is-error .drop-msg { color: var(--danger); }
+.bar { flex: 1; height: 4px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.bar > span { display: block; height: 100%; width: var(--p, 0%); background: var(--ink); transition: width .15s ease; }
+.drop.is-done .bar > span { background: var(--lab-ink); }
+.drop.is-error .bar > span { background: var(--danger); }
+
+/* Sticky save bar with a live checklist */
+.savebar { position: sticky; bottom: 16px; display: flex; align-items: center; gap: 20px; padding: 12px 12px 12px 20px; background: rgba(255, 255, 255, .92);
+  backdrop-filter: blur(10px); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px -16px rgba(0, 0, 0, .25); }
+.savebar-progress { flex: 1; display: grid; gap: 8px; min-width: 0; }
+.checklist { font: 500 13px var(--mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.savebar .bar > span { background: var(--lab-ink); transition: width .3s var(--ease); }
+.savebar.is-saving button { opacity: .7; }
+.danger-zone { margin-top: 40px; padding: 20px; border: 1px solid #e6b7b2; border-radius: 10px; background: #fff8f7; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.danger-zone h2 { font-size: 16px; }
+.danger-zone p { color: var(--muted); font-size: 13px; margin: 5px 0 0; }
+.btn-danger { color: #fff; background: var(--danger); }
+.btn-danger:hover { background: #8f1b13; }
+@media (max-width: 640px) { .step { padding: 20px; } .savebar { bottom: 8px; } }

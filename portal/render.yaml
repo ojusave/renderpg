@@ -1,0 +1,53 @@
+# Maker Day Science Fair: deploy into the Maker Day 2026 workspace.
+# Blueprint path: portal/render.yaml. Okta client secret is set in the Dashboard, never here.
+projects:
+  - name: maker-day-science-fair
+    environments:
+      - name: production
+        services:
+          - type: web
+            name: maker-day-science-fair
+            runtime: node
+            plan: starter
+            region: oregon
+            rootDir: portal
+            buildCommand: bun install --frozen-lockfile
+            preDeployCommand: bun run migrate
+            startCommand: bun run start
+            healthCheckPath: /health
+            autoDeployTrigger: commit
+            # Uploads live on this disk, so the service runs as one instance.
+            disk:
+              name: media
+              mountPath: /var/data
+              sizeGB: 10
+            # Okta login (early access). pathPattern is a regex (oauth2-proxy skip-auth route).
+            # Public: gallery, project pages, media, assets, health. Submit, edit, and upload
+            # stay behind Okta, and the app verifies X-Forwarded-Access-Token on every write.
+            authentication:
+              enabled: true
+              excludedEndpoints:
+                - pathPattern: "/$"
+                  method: GET
+                - pathPattern: "/p/"
+                  method: GET
+                - pathPattern: "/media/"
+                  method: GET
+                - pathPattern: "/assets/"
+                  method: GET
+                - pathPattern: "/health$"
+            envVars:
+              - key: BUN_VERSION
+                value: 1.3.6
+              - key: DATABASE_URL
+                fromDatabase:
+                  name: maker-day-science-fair-db
+                  property: connectionString
+              - key: MEDIA_DIR
+                value: /var/data/media
+        databases:
+          - name: maker-day-science-fair-db
+            plan: basic-256mb
+            region: oregon
+            postgresMajorVersion: "17"
+            ipAllowList: []
