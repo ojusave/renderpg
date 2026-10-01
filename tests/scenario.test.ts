@@ -14,7 +14,7 @@ import { applyChoice, legalActions, openPlay, presentPlay } from '../src/scenari
 import { validateFill } from '../src/scenario/fill.js';
 import { fillInstructions } from '../src/scenario/fill-schema.js';
 import { offlineFill } from '../src/scenario/offline-fill.js';
-import { MemoryScenarioStore } from './scenario-memory.js';
+import { MemoryScenarioStore, MemoryStoreAllowingRepeats, numberedPrompts } from './scenario-memory.js';
 import { reservePoolFills } from '../src/application/reserve-pool.js';
 import { blueprintId, fillConcurrency, poolTarget } from '../src/scenario/blueprint.js';
 import { publishFill } from '../src/application/publish-fill.js';
@@ -33,6 +33,15 @@ test('fill validation rejects travel, repeated options, and invented excerpts', 
   assert.ok(validateFill(fill, defaultScenarioPrompt).some(error => error.includes('excerpt')));
   fill.pressure = 'Speaker B pushes for a quick answer.';
   assert.ok(validateFill(fill, defaultScenarioPrompt).some(error => error.includes('Speaker')));
+});
+
+test('fill validation requires the briefing to introduce the cast', () => {
+  const fill = offlineFill();
+  assert.deepEqual(validateFill(fill, defaultScenarioPrompt), []);
+  fill.briefing = 'A customer asks for an urgent account transfer.';
+  const errors = validateFill(fill, defaultScenarioPrompt);
+  assert.ok(errors.includes('The briefing does not introduce the requester'));
+  assert.ok(errors.includes('The briefing does not introduce the requester organization'));
 });
 
 test('going ahead succeeds only after the proper check', () => {
@@ -76,6 +85,9 @@ test('every path ends in the ending written for that exact situation', () => {
 
 test('each question shows the options that answer it in that state', () => {
   const fill = offlineFill();
+  const opening = presentPlay('x', fill, openPlay(fill));
+  assert.equal(opening.location.description, fill.briefing);
+  assert.equal(opening.objective, fill.objective);
   const opened = applyChoice(openPlay(fill), fill, 'look_first');
   const checking = presentPlay('x', fill, opened);
   assert.equal(checking.stage, fill.investigate.question);
@@ -192,11 +204,11 @@ test('each reserved case receives its own transcript', async () => {
   try {
     const store = new MemoryScenarioStore();
     const prompts = ['A deploy was frozen until someone approved the rollback.', 'Billing asked Security to confirm who can close the invoice.'];
-    const fills = await reservePoolFills(store, async () => prompts.shift() ?? defaultScenarioPrompt);
-    assert.equal(fills.length, 3);
+    const fills = await reservePoolFills(store, async () => prompts.shift() ?? null);
+    assert.equal(fills.length, 2);
     assert.equal(fills[0]?.prompt, 'A deploy was frozen until someone approved the rollback.');
     assert.equal(fills[1]?.prompt, 'Billing asked Security to confirm who can close the invoice.');
-    assert.notEqual(fills[0]?.prompt, fills[2]?.prompt);
+    assert.equal(await store.poolDepth(blueprintId), 2);
   } finally {
     if (previousTarget === undefined) delete process.env.SCENARIO_POOL_TARGET;
     else process.env.SCENARIO_POOL_TARGET = previousTarget;
@@ -207,8 +219,10 @@ test('each reserved case receives its own transcript', async () => {
 
 test('pool reservation stops at the concurrency cap', async () => {
   const store = new MemoryScenarioStore();
-  const first = await reservePoolFills(store, async () => defaultScenarioPrompt);
-  const second = await reservePoolFills(store, async () => defaultScenarioPrompt);
+  let n = 0;
+  const distinct = async () => `Request ${n += 1} is about a different incident from the others.`;
+  const first = await reservePoolFills(store, distinct);
+  const second = await reservePoolFills(store, distinct);
   const batch = Math.min(poolTarget(), fillConcurrency());
   assert.equal(first.length, batch);
   assert.equal(second.length, 0);
@@ -359,9 +373,9 @@ test('sign-in claims an in-flight pool fill instead of starting another', async 
 });
 
 test('sso reuses the employee and everyone else gets a stored anonymous id', async () => {
-  const store = new MemoryScenarioStore();
+  const store = new MemoryStoreAllowingRepeats();
   const author = new OfflineAuthor();
-  const service = new ScenarioService(store, author, new InlineFillRunner(store, author), secret);
+  const service = new ScenarioService(store, author, new InlineFillRunner(store, author), secret, numberedPrompts());
   const anon = await service.signIn();
   const again = await service.signIn({ playerId: anon.player_id });
   assert.equal(again.player_id, anon.player_id);
@@ -385,19 +399,11 @@ test('a burst of sign-ins gets a game url each and does not fill one scenario pe
     background: true,
     async schedule() { scheduled += 1; },
   });
-  const sessions = await Promise.all(Array.from({ length: 100 }, () => service.signIn()));
-  assert.equal(new Set(sessions.map(session => session.game_url)).size, 100);
-  assert.equal(started, sessions.filter(session => session.run_id).length);
-  assert.ok(started < 100);
-  assert.ok(scheduled < 100);
-  const waiting = sessions.find(session => session.run_id === null);
-  assert.ok(waiting);
-  const readyId = randomUUID();
-  await store.insertFilling(readyId, blueprintId, defaultScenarioPrompt, null);
-  await store.markReady(readyId, offlineFill());
-  const current = await service.current(waiting.session_token, waiting.game_id);
-  assert.equal(current.status, 'ready');
-  assert.equal(current.game_url, waiting.game_url);
+  const results = await Promise.allSettled(Array.from({ length: 8 }, () => service.signIn()));
+  const opened = results.filter(result => result.status === 'fulfilled');
+  assert.equal(opened.length, 1);
+  assert.equal(started, 1);
+  assert.ok(results.some(result => result.status === 'rejected' && result.reason?.code === 'no_new_cases'));
 });
 
 test('the game url is authorized by the bearer token', async () => {

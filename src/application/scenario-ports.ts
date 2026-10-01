@@ -3,6 +3,8 @@ import type { PlayState } from '../scenario/engine.js';
 import type { ScenarioFill } from '../scenario/fill.js';
 import type { FillProgress, TaskStatus, WritingSample } from './fill-progress.js';
 
+export interface PublishedStory { prompt: string; story: string }
+
 export interface ScenarioRow {
   id: string;
   blueprintId: string;
@@ -44,6 +46,10 @@ export interface ScenarioStore {
   commitChoice(sessionId: string, key: string, requestHash: string, apply: (play: PlayState) => Promise<{ play: PlayState; response: GameView }> | { play: PlayState; response: GameView }): Promise<GameView>;
   deleteSession(sessionId: string): Promise<void>;
   claimReady(sessionId: string, blueprintId: string): Promise<ScenarioRow | null>;
+  /** Source and story of every ready or played case, so a new one can be compared. */
+  publishedStories(blueprintId: string): Promise<PublishedStory[]>;
+  /** True when a case that has not failed was already made from this prompt. */
+  promptInUse(blueprintId: string, prompt: string): Promise<boolean>;
   /** Assigns an unclaimed fill that is already running so sign-in does not start a second one. */
   claimFilling(sessionId: string, blueprintId: string): Promise<ScenarioRow | null>;
   insertFilling(id: string, blueprintId: string, prompt: string, sessionId: string | null): Promise<void>;
@@ -62,6 +68,8 @@ export interface ScenarioStore {
   /** Counts every fill still in progress, including ones already assigned to a player. */
   fillingCount(blueprintId: string): Promise<number>;
   expireStale(beforeIso: string): Promise<number>;
+  /** Fails fills with no task run that were last touched before `beforeIso`. Their in-process filler is gone. */
+  expireOrphans(beforeIso: string): Promise<number>;
   /** Runs the critical section alone so two replenishers cannot overfill the pool. */
   withPoolLock<T>(work: () => Promise<T>): Promise<T>;
   choice(sessionId: string, key: string): Promise<SavedChoice | null>;

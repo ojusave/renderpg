@@ -93,6 +93,15 @@ export class PostgresScenarioStore implements ScenarioStore {
     } finally { client.release(); }
   }
   async claimReady(sessionId: string, blueprintId: string) { return this.claimOpen(sessionId, blueprintId, 'ready'); }
+  async publishedStories(blueprintId: string) {
+    const rows = (await this.pool.query(`SELECT prompt, concat_ws(' ', content->>'title', content->>'objective', content->>'briefing') AS story
+      FROM filled_scenarios WHERE blueprint_id=$1 AND status IN ('ready','claimed') AND content IS NOT NULL`, [blueprintId])).rows;
+    return rows.map(row => ({ prompt: row.prompt as string, story: row.story as string }));
+  }
+  async promptInUse(blueprintId: string, prompt: string) {
+    return (await this.pool.query(`SELECT 1 FROM filled_scenarios WHERE blueprint_id=$1 AND status <> 'failed' AND prompt=$2 LIMIT 1`,
+      [blueprintId, prompt])).rowCount === 1;
+  }
   async claimFilling(sessionId: string, blueprintId: string) { return this.claimOpen(sessionId, blueprintId, 'filling'); }
   private async claimOpen(sessionId: string, blueprintId: string, status: 'ready' | 'filling'): Promise<ScenarioRow | null> {
     const client = await this.pool.connect();
@@ -167,9 +176,15 @@ export class PostgresScenarioStore implements ScenarioStore {
     return count;
   }
   async expireStale(beforeIso: string) {
-    const result = await this.pool.query(`UPDATE filled_scenarios SET status='failed', error='Fill timed out.',
+    return this.expire('Fill timed out.', `status='filling' AND updated_at < $2`, beforeIso);
+  }
+  async expireOrphans(beforeIso: string) {
+    return this.expire('The game restarted while preparing this case.', `status='filling' AND run_id IS NULL AND updated_at < $2`, beforeIso);
+  }
+  private async expire(error: string, where: string, beforeIso: string) {
+    const result = await this.pool.query(`UPDATE filled_scenarios SET status='failed', error=$1,
       progress=jsonb_set(jsonb_set(progress, '{phase}', '"failed"'), '{label}', to_jsonb('The case could not be prepared.'::text)),
-      updated_at=now() WHERE status='filling' AND updated_at < $1 RETURNING id`, [beforeIso]);
+      updated_at=now() WHERE ${where} RETURNING id`, [error, beforeIso]);
     for (const row of result.rows) await this.notify(row.id);
     return result.rowCount ?? 0;
   }

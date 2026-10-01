@@ -23,6 +23,7 @@ export type SessionView = {
 export class ScenarioService {
   private replenishAt = 0;
   private replenishInflight: Promise<unknown> | null = null;
+  private startedAt = new Date().toISOString();
   constructor(private store: ScenarioStore, private author: ScenarioAuthor, private runner: FillRunner, private secret: string, private prompts: ScenarioPromptSource | null = null, private scheduler?: PoolScheduler, private runs?: TaskRunSource) {
     if (secret.length < 32) throw new Error('SESSION_SECRET must contain at least 32 characters');
   }
@@ -67,7 +68,15 @@ export class ScenarioService {
       return this.view(token, id, playerId, 'preparing', inflight.runId, null, null, inflight.progress);
     }
     const prompt = await this.sourcePrompt();
+    if (!prompt) {
+      await this.store.deleteSession(id);
+      throw conflict('no_new_cases', 'There are no new cases right now. New ones appear as new Slack conversations come in.');
+    }
     const scenarioId = await reservePlayerFill(this.store, id, prompt);
+    if (!scenarioId && await this.store.promptInUse(blueprintId, prompt)) {
+      await this.store.deleteSession(id);
+      throw conflict('no_new_cases', 'There are no new cases right now. New ones appear as new Slack conversations come in.');
+    }
     if (!scenarioId) {
       this.kickPool();
       return this.view(token, id, playerId, 'preparing', null, null, null, queuedProgress());
@@ -157,14 +166,20 @@ export class ScenarioService {
     if (missing.length) throw unavailable();
   }
 
-  private async sourcePrompt(): Promise<string> {
+  /** A new transcript, or the built-in story if no case uses it yet. Null when neither is left. */
+  private async sourcePrompt(): Promise<string | null> {
+    const prompt = await this.poolPrompt();
+    if (prompt) return prompt;
+    return await this.store.promptInUse(blueprintId, defaultScenarioPrompt) ? null : defaultScenarioPrompt;
+  }
+
+  /** Takes the next unused transcript. The built-in story is not copied to fill the pool. */
+  private async poolPrompt(): Promise<string | null> {
     try {
-      const prompt = (await this.prompts?.nextPrompt())?.trim();
-      if (prompt) return prompt;
+      return (await this.prompts?.nextPrompt())?.trim() || null;
     } catch {
-      return defaultScenarioPrompt;
+      return null;
     }
-    return defaultScenarioPrompt;
   }
 
   /** Fills one blueprint and marks the scenario ready or failed. */
@@ -174,16 +189,23 @@ export class ScenarioService {
 
   /** Expires abandoned fills and starts replacements up to the pool target. */
   async replenish(): Promise<number> {
-    const jobs = await reservePoolFills(this.store, () => this.sourcePrompt());
-    for (const job of jobs) {
+    const jobs = await reservePoolFills(this.store, () => this.poolPrompt());
+    const results = await Promise.allSettled(jobs.map(async job => {
       const run = await this.runner.start(job);
       await this.store.setRun(job.scenarioId, run.runId);
-    }
+    }));
+    const failed = results.find(result => result.status === 'rejected');
+    if (failed) throw failed.reason;
     return jobs.length;
   }
 
   /** Restores the pool without delaying the caller. Render mode starts the parent workflow. */
-  warm(): void { this.kickPool(); }
+  warm(): void {
+    if (this.runner.background) { this.kickPool(); return; }
+    void this.store.expireOrphans(this.startedAt)
+      .catch(error => console.warn(JSON.stringify({ event: 'orphan_expiry_failed', message: error instanceof Error ? error.message : 'unknown' })))
+      .finally(() => this.kickPool());
+  }
 
   /** Restores the pool without delaying the sign-in response. A burst shares one attempt. */
   private kickPool(): void {

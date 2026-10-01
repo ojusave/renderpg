@@ -1,6 +1,8 @@
 import type { GameView } from '../src/game/types.js';
 import type { PlayState } from '../src/scenario/engine.js';
 import type { ScenarioFill } from '../src/scenario/fill.js';
+import { storyText } from '../src/scenario/similarity.js';
+import { defaultScenarioPrompt } from '../src/scenario/default-prompt.js';
 import { AppError, conflict } from '../src/application/errors.js';
 import { queuedProgress, readyProgress, type FillProgress } from '../src/application/fill-progress.js';
 import type { PlayerRecord, PlayerSession, ScenarioRow, ScenarioStore, SavedChoice } from '../src/application/scenario-ports.js';
@@ -64,6 +66,14 @@ export class MemoryScenarioStore implements ScenarioStore {
     if (status === 'ready') found.status = 'claimed';
     session.scenarioId = found.id;
     return structuredClone(found);
+  }
+  async publishedStories(blueprintId: string) {
+    return [...this.scenarios.values()]
+      .filter(row => row.blueprintId === blueprintId && (row.status === 'ready' || row.status === 'claimed') && row.content)
+      .map(row => ({ prompt: row.prompt, story: storyText(row.content!) }));
+  }
+  async promptInUse(blueprintId: string, prompt: string) {
+    return [...this.scenarios.values()].some(row => row.blueprintId === blueprintId && row.status !== 'failed' && row.prompt === prompt);
   }
   async claimReady(sessionId: string, blueprintId: string) { return this.claimOpen(sessionId, blueprintId, 'ready'); }
   async claimFilling(sessionId: string, blueprintId: string) { return this.claimOpen(sessionId, blueprintId, 'filling'); }
@@ -141,9 +151,15 @@ export class MemoryScenarioStore implements ScenarioStore {
     try { return await work(); } finally { release(); }
   }
   async expireStale(beforeIso: string) {
+    return this.expire('Fill timed out.', row => row.updatedAt < beforeIso);
+  }
+  async expireOrphans(beforeIso: string) {
+    return this.expire('The game restarted while preparing this case.', row => row.runId === null && row.updatedAt < beforeIso);
+  }
+  private expire(error: string, matches: (row: ScenarioRow) => boolean) {
     let count = 0;
-    for (const row of this.scenarios.values()) if (row.status === 'filling' && row.updatedAt < beforeIso) {
-      row.status = 'failed'; row.error = 'Fill timed out.';
+    for (const row of this.scenarios.values()) if (row.status === 'filling' && matches(row)) {
+      row.status = 'failed'; row.error = error;
       row.progress = { ...row.progress, phase: 'failed', label: 'The case could not be prepared.' };
       this.notify(row.id); count += 1;
     }
@@ -155,4 +171,15 @@ export class MemoryScenarioStore implements ScenarioStore {
     if (!this.choices.has(id)) this.choices.set(id, { requestHash, response });
   }
   async close() {}
+}
+
+/** Memory pool that skips the repeated-story check, for tests about sessions and concurrency. */
+export class MemoryStoreAllowingRepeats extends MemoryScenarioStore {
+  override async publishedStories() { return []; }
+}
+
+/** Gives each call its own transcript that still quotes the built-in story, so offline fills validate. */
+export function numberedPrompts() {
+  let next = 0;
+  return { async nextPrompt() { next += 1; return `${defaultScenarioPrompt} Case ${next}.`; } };
 }
