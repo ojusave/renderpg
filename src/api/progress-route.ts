@@ -8,7 +8,7 @@ const bearer = (authorization?: string) => {
   return match[1]!;
 };
 
-/** Streams fill progress for one game URL until the task finishes. */
+/** Streams fill progress for the signed-in game until the task finishes. */
 export function registerProgress(app: FastifyInstance, scenarios: ScenarioService): void {
   const stream = async (request: FastifyRequest<{ Params: { session_id?: string } }>, reply: FastifyReply) => {
     const header = request.headers.authorization;

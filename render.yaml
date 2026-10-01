@@ -31,6 +31,10 @@ projects:
                 value: renderpg-workflows/fillScenario
               - key: REPLENISH_TASK
                 value: renderpg-workflows/replenishScenarioPool
+              - key: SCENARIO_POOL_TARGET
+                value: "100"
+              - key: SCENARIO_FILL_CONCURRENCY
+                value: "8"
               - key: RENDER_API_KEY
                 sync: false
         services:

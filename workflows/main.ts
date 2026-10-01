@@ -8,6 +8,7 @@ import { compileAndPublish } from '../src/application/compile-game.js';
 import { publishFill } from '../src/application/publish-fill.js';
 import { reserveGamePool } from '../src/composition/scenario-pool.js';
 import type { GenerationInput } from '../src/application/ports.js';
+import { poolTarget } from '../src/scenario/blueprint.js';
 
 const required = (key: string) => {
   const value = process.env[key]?.trim();
@@ -40,7 +41,13 @@ const fillScenario = task({ name: 'fillScenario', retry: { maxRetries: 2, waitDu
 
 task({ name: 'replenishScenarioPool', retry: { maxRetries: 1, waitDurationMs: 1000 }, timeoutSeconds: 1800 },
   async function replenishScenarioPool(ctx: TaskContext) {
-    const jobs = await reserveGamePool(scenarioStore);
-    for (const job of jobs) await ctx.run(fillScenario, job);
-    return { started: jobs.length };
+    let started = 0;
+    const target = poolTarget();
+    while (started < target) {
+      const jobs = await reserveGamePool(scenarioStore);
+      if (!jobs.length) break;
+      await Promise.all(jobs.map(job => ctx.run(fillScenario, job)));
+      started += jobs.length;
+    }
+    return { started };
   });

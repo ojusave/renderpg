@@ -4,7 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { OfflineAuthor } from '../src/adapters/offline-author.js';
 import { InlineFillRunner } from '../src/adapters/inline-fill-runner.js';
+import { OfflineAI } from '../src/adapters/offline-ai.js';
+import { GameService } from '../src/application/game-service.js';
 import { ScenarioService } from '../src/application/scenario-service.js';
+import { buildApp } from '../src/api/app.js';
+import { MemoryRepository } from './helpers.js';
 import { defaultScenarioPrompt } from '../src/scenario/default-prompt.js';
 import { applyChoice, legalActions, openPlay, presentPlay } from '../src/scenario/engine.js';
 import { alignFill, validateFill } from '../src/scenario/fill.js';
@@ -336,6 +340,8 @@ test('the production blueprint shares workflow config and Slack can start a run'
   assert.match(group, /key: RENDER_API_KEY/);
   assert.match(group, /key: SCENARIO_PROVIDER/);
   assert.match(group, /key: OKTA_AUTH\n\s+value: "on"/);
+  assert.match(group, /key: SCENARIO_POOL_TARGET\n\s+value: "100"/);
+  assert.match(group, /key: SCENARIO_FILL_CONCURRENCY\n\s+value: "8"/);
   const slackStart = blueprint.indexOf('name: renderpg-slack-sync');
   const slack = blueprint.slice(slackStart, blueprint.indexOf('type: workflow', slackStart));
   assert.match(slack, /fromGroup: renderpg-config/);
@@ -361,4 +367,71 @@ test('sign-in claims an in-flight pool fill instead of starting another', async 
   assert.equal(current.status, 'ready');
   assert.equal(current.progress.percent, 100);
   assert.equal((await store.scenario(scenarioId))?.status, 'claimed');
+});
+
+test('sso reuses the employee and everyone else gets a stored anonymous id', async () => {
+  const store = new MemoryScenarioStore();
+  const author = new OfflineAuthor();
+  const service = new ScenarioService(store, author, new InlineFillRunner(store, author), secret);
+  const anon = await service.signIn();
+  const again = await service.signIn({ playerId: anon.player_id });
+  assert.equal(again.player_id, anon.player_id);
+  assert.notEqual(again.game_id, anon.game_id);
+  assert.equal(anon.game_url, `/sessions/${anon.game_id}`);
+  await assert.rejects(service.current(anon.session_token, again.game_id), { code: 'game_not_found' });
+  const employee = await service.signIn({ subject: 'ada@render.com', playerId: anon.player_id });
+  const same = await service.signIn({ subject: 'ada@render.com' });
+  assert.equal(same.player_id, employee.player_id);
+  assert.notEqual(same.player_id, anon.player_id);
+  const stranger = await service.signIn({ playerId: randomUUID() });
+  assert.notEqual(stranger.player_id, anon.player_id);
+});
+
+test('a burst of sign-ins gets a game url each and does not fill one scenario per player', async () => {
+  const store = new MemoryScenarioStore();
+  let started = 0;
+  let scheduled = 0;
+  const runner = { background: true, async start() { started += 1; return { runId: randomUUID() }; } };
+  const service = new ScenarioService(store, new OfflineAuthor(), runner, secret, null, {
+    background: true,
+    async schedule() { scheduled += 1; },
+  });
+  const sessions = await Promise.all(Array.from({ length: 100 }, () => service.signIn()));
+  assert.equal(new Set(sessions.map(session => session.game_url)).size, 100);
+  assert.equal(started, sessions.filter(session => session.run_id).length);
+  assert.ok(started < 100);
+  assert.ok(scheduled < 100);
+  const waiting = sessions.find(session => session.run_id === null);
+  assert.ok(waiting);
+  const readyId = randomUUID();
+  await store.insertFilling(readyId, blueprintId, defaultScenarioPrompt, null);
+  await store.markReady(readyId, offlineFill());
+  const current = await service.current(waiting.session_token, waiting.game_id);
+  assert.equal(current.status, 'ready');
+  assert.equal(current.game_url, waiting.game_url);
+});
+
+test('the game url is authorized by the bearer token', async () => {
+  const store = new MemoryScenarioStore();
+  const author = new OfflineAuthor();
+  const scenarios = new ScenarioService(store, author, new InlineFillRunner(store, author), secret);
+  const app = buildApp(new GameService(new MemoryRepository(), new OfflineAI(), secret), new MemoryRepository(), false, scenarios);
+  const created = await app.inject({ method: 'POST', url: '/sessions' });
+  assert.equal(created.statusCode, 200);
+  const body = created.json();
+  assert.equal(body.game_url, `/sessions/${body.game_id}`);
+  const denied = await app.inject({
+    method: 'GET',
+    url: `/sessions/${randomUUID()}`,
+    headers: { authorization: `Bearer ${body.session_token}` },
+  });
+  assert.equal(denied.statusCode, 404);
+  const allowed = await app.inject({
+    method: 'GET',
+    url: body.game_url,
+    headers: { authorization: `Bearer ${body.session_token}` },
+  });
+  assert.equal(allowed.statusCode, 200);
+  assert.equal(allowed.json().game_id, body.game_id);
+  await app.close();
 });

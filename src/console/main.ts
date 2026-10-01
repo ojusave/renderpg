@@ -7,7 +7,7 @@ import { stripVTControlCharacters } from 'node:util';
 type Action = { id: string; label: string; command: string };
 type View = { id: string; version: number; status: string; stage: string; transcript: { id: string; text: string }[]; available_actions: Action[] };
 type Pending = { key: string; path: string; body: unknown };
-type Session = { token?: string; pending?: Pending };
+type Session = { token?: string; playerId?: string; gameUrl?: string; pending?: Pending };
 const file = '.console-session.json';
 const api = (process.env.API_URL ?? 'http://127.0.0.1:3000').replace(/\/$/, '');
 const shutdown = new AbortController();
@@ -24,7 +24,7 @@ class ApiFailure extends Error {
 async function request(path: string, body?: unknown, key?: string, method = body === undefined ? 'GET' : 'POST'): Promise<any> {
   const employee = process.env.RENDER_ACCESS_TOKEN?.trim();
   const response = await fetch(`${api}${path}`, { method,
-    headers: { ...(method === 'POST' && body !== undefined ? { 'content-type': 'application/json' } : {}), ...(session.token ? { authorization: `Bearer ${session.token}` } : {}), ...(employee ? { 'x-forwarded-access-token': employee } : {}), ...(key ? { 'idempotency-key': key } : {}) },
+    headers: { ...(method === 'POST' && body !== undefined ? { 'content-type': 'application/json' } : {}), ...(session.token ? { authorization: `Bearer ${session.token}` } : {}), ...(session.playerId ? { 'x-player-id': session.playerId } : {}), ...(employee ? { 'x-forwarded-access-token': employee } : {}), ...(key ? { 'idempotency-key': key } : {}) },
     ...(method === 'POST' && body !== undefined ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.any([AbortSignal.timeout(150000), shutdown.signal]) });
   const data = await response.json().catch(() => ({ code: 'invalid_response', message: `HTTP ${response.status}` })) as any;
   if (!response.ok) throw new ApiFailure(response.status, `${data.code}: ${data.message}`);
@@ -34,7 +34,7 @@ async function waitUntilReady(): Promise<void> {
   const deadline = Date.now() + 90000;
   let shown = -1;
   while (Date.now() < deadline) {
-    const current = await request('/sessions/current');
+    const current = await request(session.gameUrl ?? '/sessions/current');
     const progress = current.progress;
     if (progress && progress.percent !== shown) {
       shown = progress.percent;
@@ -53,8 +53,9 @@ async function waitUntilReady(): Promise<void> {
 }
 async function endCase(): Promise<void> {
   if (!session.token) return;
-  try { await request('/sessions/current', undefined, undefined, 'DELETE'); } catch { /* A missing session can still be replaced. */ }
+  try { await request(session.gameUrl ?? '/sessions/current', undefined, undefined, 'DELETE'); } catch { /* A missing session can still be replaced. */ }
   delete session.token;
+  delete session.gameUrl;
   delete session.pending;
   await save();
 }
@@ -63,6 +64,8 @@ async function openCase(): Promise<View> {
   console.log('\nClaiming a prepared case.');
   const opened = await request('/sessions', undefined, undefined, 'POST');
   session.token = opened.session_token;
+  session.playerId = opened.player_id;
+  session.gameUrl = opened.game_url;
   delete session.pending;
   await save();
   if (opened.status === 'failed') throw new ApiFailure(503, `scenario_failed: ${opened.message ?? 'The case could not be prepared.'}`);
@@ -71,14 +74,14 @@ async function openCase(): Promise<View> {
     await waitUntilReady();
   }
   if (opened.game) return opened.game;
-  return request('/sessions/current/begin', undefined, undefined, 'POST');
+  return request(`${session.gameUrl ?? '/sessions/current'}/begin`, undefined, undefined, 'POST');
 }
 async function resume(): Promise<View> {
-  const current = await request('/sessions/current');
+  const current = await request(session.gameUrl ?? '/sessions/current');
   if (current.game) return current.game;
   if (current.status === 'preparing') await waitUntilReady();
   if (current.status === 'failed') throw new ApiFailure(503, `scenario_failed: ${current.message ?? 'The case could not be prepared.'}`);
-  return request('/sessions/current/begin', undefined, undefined, 'POST');
+  return request(`${session.gameUrl ?? '/sessions/current'}/begin`, undefined, undefined, 'POST');
 }
 async function flush(): Promise<View> {
   const p = session.pending!;
@@ -142,7 +145,7 @@ try {
       else {
         if (!text) continue;
         if (!game) { console.log('Use /new or /resume first.'); continue; }
-        session.pending = { path: '/sessions/current/choices', key: randomUUID(), body: { action_id: choice(game, text), expected_version: game.version } };
+        session.pending = { path: `${session.gameUrl ?? '/sessions/current'}/choices`, key: randomUUID(), body: { action_id: choice(game, text), expected_version: game.version } };
         await save();
         game = await flush();
       }
