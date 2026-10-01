@@ -12,7 +12,7 @@ export class AnthropicAuthor implements ScenarioAuthor {
   }
   async fill(prompt: string, variationSeed: string): Promise<ScenarioFill> {
     const message = await this.client.messages.create({
-      model: this.model, max_tokens: 1800, temperature: 1,
+      model: this.model, max_tokens: 2400, temperature: 1,
       system: fillInstructions,
       messages: [{ role: 'user', content: JSON.stringify({ sourcePrompt: prompt, variationSeed, variationDirection: variationDirection(variationSeed) }) }],
       output_config: { format: { type: 'json_schema', schema: scenarioFillSchema(prompt) } },

@@ -1,4 +1,4 @@
-import { actionIds, endingIds, evidenceIds, stepIds } from './blueprint.js';
+import { actionIds, endingIds, evidenceIds, setupIds } from './blueprint.js';
 
 const text = { type: 'string' };
 const object = (properties: Record<string, unknown>) => ({
@@ -12,29 +12,39 @@ function excerpts(prompt: string): string[] {
   return unique;
 }
 
-/** Structured-output schema for blueprint text slots. The model cannot add actions. */
+/** Structured-output schema for blueprint text slots. Cast comes first so the model plans names before prose. */
 export function scenarioFillSchema(prompt: string): Record<string, unknown> {
   const quote = excerpts(prompt);
   const slot = object({ text, sourceExcerpt: quote.length ? { type: 'string', enum: quote } : text });
   return object({
+    cast: object({ customer: text, company: text, former_employee: text }),
     title: text, objective: text, briefing: text,
     choices: object(Object.fromEntries(actionIds.map(id => [id, object({ label: text })]))),
-    steps: object(Object.fromEntries(stepIds.map(id => [id, text]))),
     evidence: object(Object.fromEntries(evidenceIds.map(id => [id, slot]))),
+    trust_result: text,
+    setups: object(Object.fromEntries(setupIds.map(id => [id, text]))),
     endings: object(Object.fromEntries(endingIds.map(id => [id, object({ title: text, summary: text })]))),
   });
 }
 
-/** Tells the model what each slot means and when the player sees it. Shared by every author. */
-export const fillInstructions = `Write the words for one telling of an account-ownership training case. The player is a Security teammate. Use only the supplied source. Follow variationDirection so this telling differs from other tellings of the same source. Write professional, complete sentences in the second person. Do not invent policy, systems, documents, offices, travel, visits, credentials, or new actions. Describe the investigation in general terms. Every sourceExcerpt must be copied exactly from the source.
+/** Tells the model how this case plays and what each slot must do. Shared by every author. */
+export const fillInstructions = `You write one telling of a short choose-your-path training case, in the style of a good interactive-fiction game. The player is a Render Security teammate. Write in the second person and present tense, in plain professional English. The player must always understand who is involved, what just happened, and why each option is tempting.
 
-Each slot is shown in exactly one situation, so it must make sense in that situation and no other.
-- title: a short case title. objective: one sentence saying the goal is to identify the rightful new owner before any transfer. briefing: two sentences: a customer contacted Security, and the account is tied to the email address of an employee who left.
-- Question "What do you do first?" choices: open_record = look up the account record; transfer_now = hand the account to the customer immediately; turn_away = tell the customer the account cannot be recovered.
-- Question "How do you identify the rightful owner?" choices: trace_owner = investigate who should own the account now; take_word = accept the customer's claim without checking it; escalate_early = hand the case to a Security lead.
-- Question "What is your decision?" choices: transfer_account = transfer the account to the customer; decline_transfer = refuse the transfer; escalate = refer the decision to a Security lead.
-- Choice labels are short imperative phrases of 3 to 9 words with no period. The three labels in one question must be clearly different decisions.
-- steps.open_record: one sentence describing that you open the account record. evidence.account_record.text: one sentence stating what the record shows: the account is tied to the departed employee's email address.
-- steps.trace_owner: one sentence describing the investigation. evidence.owner_trace.text: one sentence stating the finding: the investigation identifies the customer as the rightful new owner.
-- steps.take_word: one sentence saying you accept the customer's claim without verifying it.
-- Endings: each summary is one or two sentences that explain the outcome and why. transferred_too_early: you handed over the account before checking anything. turned_away: you told a customer with a real claim the account was lost. escalated_early: you opened the record but escalated before investigating who owns the account, so a lead must do that investigation. success: you verified the customer was the rightful owner and transferred the account. unverified_transfer: you transferred on the customer's word alone, so the account could have gone to the wrong person. declined_verified: you refused even though your investigation confirmed the customer, leaving the rightful owner locked out. declined_unverified: you refused because ownership was never verified, which is safe but leaves the case unresolved. escalated_verified: you escalated even though you had verified the owner, delaying a transfer you could have made. escalated_unverified: you escalated because you had not verified ownership, which is a reasonable handoff.`;
+What happened comes only from the source: a customer contacted Security because the account they need was tied to the email address of an employee who left, so the account left with them, and Security had to investigate to identify the rightful new owner before transferring it. Do not invent Render policy, internal tool names, or procedures. To make the case easy to follow, invent a small fictional cast and reuse it in every slot: cast.customer is a full name for the customer, cast.company is the customer's fictional company, cast.former_employee is the full name of the employee who left. Refer to people by name, never as "the requester". Do not write email addresses, real company names, or real people. The facts are the same on every path: the customer really is the rightful new owner, and nobody else has a claim. Never introduce other people, rival claimants, or new facts in results or endings; when the player skipped verification, the lesson is that they could not have known, not that someone else turns up. Follow variationDirection so this telling differs from others of the same source. Every sourceExcerpt must be copied exactly from the source.
+
+How the case plays. The game shows: the briefing, then question 1. After an investigation choice it shows one result sentence plus one setup sentence, then the next question. After a final choice it shows the ending summary.
+Question 1, "What do you do first?": open_record (look up the account record), transfer_now (give the customer the account right away), turn_away (tell the customer the account cannot be recovered).
+Question 2, "How do you identify the rightful owner?": trace_owner (investigate who should own the account now), take_word (accept the customer's claim without checking), escalate_early (hand the case to a Security lead).
+Question 3, "What is your decision?": transfer_account, decline_transfer, escalate (refer the decision to a Security lead).
+
+Rules for each slot.
+- title: a short, specific case title. objective: one sentence: identify the rightful new owner before any transfer.
+- briefing: two sentences. Who contacted Security and what they want, that the account is tied to the departed employee's email address, and why the customer is in a hurry. The hurry makes giving them the account right away tempting.
+- choices: each label is a short action of 4 to 10 words with no period, in the player's voice, naming people where it helps. Give every option a believable motive so a reasonable person could pick it, for example speed, caution, or getting help. Never mark an option as right or wrong. Question 3 labels are shown whether or not the player verified ownership, so they must not mention findings, proof, or checking.
+- evidence.account_record.text: one sentence describing what the record shows, using the cast names. Do not repeat the choice label.
+- setups.investigate: one sentence that follows that finding and raises the next question: the customer offers an explanation of why they should own it and pushes to skip checks.
+- evidence.owner_trace.text: one sentence describing one concrete, plausible clue the investigation turned up and what it proves: that the customer is the rightful new owner.
+- setups.decide_verified: one sentence: the confirmation is solid and the customer is waiting, though handing the call to a lead or holding off still feels safer. Do not cast doubt on the confirmation.
+- trust_result: one sentence: you accept the customer's explanation as enough without checking it. Nothing has been transferred yet, and nothing new is learned.
+- setups.decide_unverified: one sentence: all you have is the customer's word, and they want an answer.
+- endings: each summary is one or two sentences and must not retell the whole path. Say what happens next to the people in the case, recall the specific choice that led here, and make the lesson clear without lecturing. Each ending describes only the one final action named here; for example, a decline ending never mentions escalating. transferred_too_early: handed over before checking anything; it turns out fine for the customer, and the summary must say the player could not have known it was safe. turned_away: told a customer with a real claim the account was lost. escalated_early: escalated after reading the record but before investigating ownership. success: verified through investigation, then transferred. unverified_transfer: transferred on the customer's word alone, so it could have gone to the wrong person. declined_verified: refused even though the investigation confirmed the customer, leaving the rightful owner locked out; no lead is involved. declined_unverified: refused because ownership was never verified, which is safe but leaves the customer waiting. escalated_verified: escalated after verifying, delaying a transfer the player could have made. escalated_unverified: escalated because nothing was verified, a fair handoff. Ending titles are 2 to 5 words.`;

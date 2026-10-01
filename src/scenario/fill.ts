@@ -1,17 +1,20 @@
-import { accountOwnershipBlueprint, actionIds, endingIds, evidenceIds, stepIds, type ActionId, type EndingId, type EvidenceId, type StepId } from './blueprint.js';
+import { accountOwnershipBlueprint, actionIds, endingIds, evidenceIds, setupIds, type ActionId, type EndingId, type EvidenceId, type SetupId } from './blueprint.js';
 
 export interface TextSlot { text: string; sourceExcerpt: string }
 export interface ChoiceSlot { label: string }
 export interface EndingSlot { title: string; summary: string }
+export interface Cast { customer: string; company: string; former_employee: string }
 
 /** Model-written words for one telling. Each slot is shown in exactly one game state. */
 export interface ScenarioFill {
+  cast: Cast;
   title: string;
   objective: string;
   briefing: string;
   choices: Record<ActionId, ChoiceSlot>;
-  steps: Record<StepId, string>;
   evidence: Record<EvidenceId, TextSlot>;
+  trust_result: string;
+  setups: Record<SetupId, string>;
   endings: Record<EndingId, EndingSlot>;
 }
 
@@ -25,21 +28,19 @@ function normalized(value: string): string {
 export function validateFill(fill: ScenarioFill, sourcePrompt: string): string[] {
   const errors: string[] = [];
   const prompt = normalized(sourcePrompt);
+  if (!fill.cast?.customer?.trim() || !fill.cast.company?.trim() || !fill.cast.former_employee?.trim()) errors.push('The cast is incomplete');
   if (!fill.title?.trim() || !fill.objective?.trim() || !fill.briefing?.trim()) errors.push('Title, objective, and briefing are required');
   for (const id of evidenceIds) {
     const slot = fill.evidence?.[id];
     if (!slot?.text?.trim() || !slot.sourceExcerpt?.trim()) errors.push(`Evidence ${id} is incomplete`);
     else if (!prompt.includes(normalized(slot.sourceExcerpt))) errors.push(`Evidence ${id} excerpt is not in the source`);
   }
+  if (!fill.trust_result?.trim()) errors.push('The trust result is required');
+  for (const id of setupIds) if (!fill.setups?.[id]?.trim()) errors.push(`Setup ${id} is incomplete`);
   for (const id of actionIds) {
     const label = fill.choices?.[id]?.label;
     if (!label?.trim()) errors.push(`Choice ${id} is incomplete`);
     else if (travel.test(label)) errors.push(`Choice ${id} recommends an unrealistic action`);
-  }
-  for (const id of stepIds) {
-    const step = fill.steps?.[id];
-    if (!step?.trim()) errors.push(`Step ${id} is incomplete`);
-    else if (travel.test(step)) errors.push(`Step ${id} describes an unrealistic action`);
   }
   for (const id of endingIds) {
     const ending = fill.endings?.[id];

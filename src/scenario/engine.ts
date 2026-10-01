@@ -48,6 +48,10 @@ export function twoSentences(text: string): string {
   return sentences.slice(0, 2).map(sentence => sentence.trim()).join(' ');
 }
 
+function firstSentence(text: string): string {
+  return twoSentences(text).match(/^[^.!?]+[.!?]+/)?.[0] ?? text.trim();
+}
+
 function shift(stats: Stats, changes: Stats): Stats {
   const clamp = (value: number) => Math.max(0, Math.min(100, value));
   return {
@@ -102,8 +106,10 @@ export function applyChoice(state: PlayState, fill: ScenarioFill, action: Action
     ...base, stage: 'resolution', status: 'completed', endingId: outcome.ending,
     transcript: [...state.transcript, said(action, 'completed', fill.endings[outcome.ending].summary)],
   };
-  const step = fill.steps[action as keyof ScenarioFill['steps']];
-  const text = outcome.reveal ? `${step} ${fill.evidence[outcome.reveal].text}` : step;
+  const result = outcome.reveal ? fill.evidence[outcome.reveal].text : fill.trust_result;
+  const setup = outcome.next === 'investigate' ? fill.setups.investigate
+    : base.verified ? fill.setups.decide_verified : fill.setups.decide_unverified;
+  const text = `${firstSentence(result)} ${firstSentence(setup)}`;
   return { ...base, stage: outcome.next!, transcript: [...state.transcript, said(action, 'applied', text)] };
 }
 

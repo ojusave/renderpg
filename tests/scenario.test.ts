@@ -65,18 +65,21 @@ test('every path ends in the ending written for that exact situation', () => {
   assert.deepEqual(reached, expectedEndings);
 });
 
-test('investigation turns show what you did and what you found', () => {
+test('investigation turns show what you found and set up the next question', () => {
   const fill = offlineFill();
   const opened = applyChoice(openPlay(fill), fill, 'open_record');
-  assert.equal(opened.transcript.at(-1)!.text, `${fill.steps.open_record} ${fill.evidence.account_record.text}`);
+  assert.equal(opened.transcript.at(-1)!.text, `${fill.evidence.account_record.text} ${fill.setups.investigate}`);
   const traced = applyChoice(opened, fill, 'trace_owner');
-  assert.equal(traced.transcript.at(-1)!.text, `${fill.steps.trace_owner} ${fill.evidence.owner_trace.text}`);
+  assert.equal(traced.transcript.at(-1)!.text, `${fill.evidence.owner_trace.text} ${fill.setups.decide_verified}`);
   assert.deepEqual(traced.revealed, ['account_record', 'owner_trace']);
+  const trusted = applyChoice(opened, fill, 'take_word');
+  assert.equal(trusted.transcript.at(-1)!.text, `${fill.trust_result} ${fill.setups.decide_unverified}`);
 });
 
 test('game master text is at most two sentences', () => {
   const fill = offlineFill();
-  fill.steps.open_record = 'One. Two. Three.';
+  fill.evidence.account_record.text = 'One. Two. Three.';
+  fill.setups.investigate = 'Four. Five.';
   const state = applyChoice(openPlay(fill), fill, 'open_record');
   const text = state.transcript.at(-1)!.text;
   assert.ok((text.match(/[.!?](\s|$)/g) ?? []).length <= 2, text);

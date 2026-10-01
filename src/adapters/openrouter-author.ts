@@ -17,7 +17,7 @@ export class OpenRouterAuthor implements ScenarioAuthor {
       body: JSON.stringify({
         model: this.model,
         temperature: 1,
-        max_tokens: 1800,
+        max_tokens: 2400,
         messages: [
           { role: 'system', content: fillInstructions },
           { role: 'user', content: JSON.stringify({ sourcePrompt: prompt, variationSeed, variationDirection: variationDirection(variationSeed) }) },
