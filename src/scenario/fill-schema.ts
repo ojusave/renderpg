@@ -49,6 +49,7 @@ Fill plan first, a few words per field: request (what someone wants done), stake
 
 Writing rules:
 - Second person, present tense; "you" is the player. Give every person a fictional first name and use it everywhere; never write "Speaker A", "a person", or "someone".
+- The requester and organization in cast must appear verbatim in the briefing. Introduce every other named person there before using their name in an option or later scene, and never switch a person's role.
 - Keep the answer hidden until the player earns it. The briefing, first_look, and pressure show only what the player could know before checking. What the proper check turns up appears only in check_result. Nobody in the story tells the player what the right choice is, and no rule or policy is quoted to them.
 - Each line adds something new. Never repeat what the line before it or the question already said.
 - Say what the player does, not what they don't do: "You take Sam's word for it", never "You do not verify the claim".
@@ -58,7 +59,7 @@ Writing rules:
 
 Slots:
 - title: 2 to 6 words. objective: one sentence on what the player must get right.
-- briefing: two or three sentences: who reaches out, what they ask for, and why it is urgent. Quoting them is good.
+- briefing: two or three sentences: name the requester and organization, explain any other person the case names, say what the requester asks for, and say why it is urgent. Quoting them is good.
 - first_look.text: one sentence on what the player sees when they look; it raises the question without settling it. sourceExcerpt: the words from the source this is based on, copied exactly.
 - pressure: one sentence: the requester pushes and offers the shortcut.
 - investigate.question asks what the player will accept as proof. Its options are sources of proof, not actions on the request.

@@ -21,7 +21,7 @@ To exercise the backend without Claude, start it with `AI_MODE=offline`. Offline
 
 ## Play
 
-`/new` claims another prepared telling, `/resume` refreshes, `/retry` safely replays an uncertain request, and `/quit` exits. Reply with the number of a listed choice. A warm pool opens immediately. A cold pool waits once while that telling is written, then the next sign-in claims a case that was prepared in the background.
+`/new` claims another prepared telling, `/resume` refreshes, `/retry` safely replays an uncertain request, `/sandboxes` lists preview versions, `/forks` shows where each current choice leads, and `/quit` exits. A fork preview does not change the saved case. Reply with the number of a listed choice. A warm pool opens immediately. A cold pool waits once while that telling is written, then the next sign-in claims a case that was prepared in the background.
 
 Literal commands are derived from each generated graph. `look`, `help`, and `inventory` are always available. With Claude enabled, natural-language requests are mapped only to generated verbs and visible targets.
 

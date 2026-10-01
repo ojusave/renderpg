@@ -341,6 +341,8 @@ test('the production blueprint shares workflow config and Slack can start a run'
   const blueprint = await readFile(new URL('../render.yaml', import.meta.url), 'utf8');
   const group = blueprint.slice(blueprint.indexOf('name: renderpg-config'), blueprint.indexOf('services:'));
   assert.match(group, /key: RENDER_API_KEY/);
+  assert.match(group, /key: SANDBOX_MODE\n\s+value: render/);
+  assert.match(group, /key: RENDER_WORKSPACE_ID/);
   assert.match(group, /key: SCENARIO_PROVIDER/);
   assert.match(group, /key: OKTA_AUTH\n\s+value: "on"/);
   assert.match(group, /key: SCENARIO_POOL_TARGET\n\s+value: "100"/);

@@ -37,6 +37,21 @@ function blank(value: string | undefined): boolean {
   return !value?.trim();
 }
 
+function includes(value: string | undefined, expected: string | undefined): boolean {
+  return normalized(value ?? '').includes(normalized(expected ?? ''));
+}
+
+function identityErrors(fill: ScenarioFill): string[] {
+  const errors: string[] = [];
+  if (!blank(fill.cast?.requester) && !includes(fill.briefing, fill.cast.requester)) {
+    errors.push('The briefing does not introduce the requester');
+  }
+  if (!blank(fill.cast?.organization) && !includes(fill.briefing, fill.cast.organization)) {
+    errors.push('The briefing does not introduce the requester organization');
+  }
+  return errors;
+}
+
 function optionErrors(where: string, labels: Record<string, string | undefined>): string[] {
   const errors: string[] = [];
   for (const [id, label] of Object.entries(labels)) {
@@ -66,12 +81,13 @@ function excerptError(name: string, slot: TextSlot | undefined, prompt: string):
   return grounded(slot!.sourceExcerpt, prompt) ? null : `${name} excerpt is not in the source`;
 }
 
-/** Rejects a fill that leaves the blueprint, invents evidence, or leaves a shown line empty. */
+/** Rejects a fill that leaves the blueprint, hides its cast, invents evidence, or leaves a shown line empty. */
 export function validateFill(fill: ScenarioFill, sourcePrompt: string): string[] {
   const prompt = normalized(sourcePrompt);
   const errors: (string | null)[] = [];
   if (blank(fill.cast?.requester) || blank(fill.cast?.organization)) errors.push('The cast is incomplete');
   if (blank(fill.title) || blank(fill.objective) || blank(fill.briefing)) errors.push('Title, objective, and briefing are required');
+  errors.push(...identityErrors(fill));
   errors.push(excerptError('first_look', fill.first_look, prompt), excerptError('check_result', fill.check_result, prompt));
   if (blank(fill.pressure) || blank(fill.shortcut_result)) errors.push('Every step needs its text');
   if (blank(fill.investigate?.question)) errors.push('The second question is missing');

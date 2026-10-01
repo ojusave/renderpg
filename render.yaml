@@ -37,6 +37,10 @@ projects:
                 value: "8"
               - key: RENDER_API_KEY
                 sync: false
+              - key: SANDBOX_MODE
+                value: render
+              - key: RENDER_WORKSPACE_ID
+                sync: false
         services:
           - type: web
             name: renderpg-api

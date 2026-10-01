@@ -18,7 +18,9 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
-    "test:postgres": "tsx --env-file=.env --test tests/postgres.integration.ts tests/slack-postgres.integration.ts tests/scenario-postgres.integration.ts",
+    "test:postgres": "tsx --env-file=.env --test tests/postgres.integration.ts tests/slack-postgres.integration.ts tests/scenario-postgres.integration.ts tests/fill-orphans-postgres.integration.ts",
+    "test:sandboxes": "npm run build && node dist/scripts/sandbox-smoke.js",
+    "test:system": "tsx scripts/fork-system.ts",
     "contract:check": "tsx scripts/check-contract.ts",
     "check": "npm run typecheck && npm run contract:check && npm test"
   },

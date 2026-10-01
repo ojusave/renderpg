@@ -9,6 +9,9 @@ import { applyChoice, legalActions, openPlay, presentPlay } from '../scenario/en
 import type { ActionId } from '../scenario/blueprint.js';
 import type { GameView } from '../game/types.js';
 import { publishFill } from './publish-fill.js';
+import { listSandboxVersions, previewSavedForks } from './fork-session.js';
+import type { ForkSimulator } from './scenario-ports.js';
+import { InlineForkSimulator } from '../sandbox/inline.js';
 import { progressJson, queuedProgress, readyProgress, type FillProgress, type ProgressJson } from './fill-progress.js';
 import { watchFill } from './watch-progress.js';
 
@@ -24,7 +27,7 @@ export class ScenarioService {
   private replenishAt = 0;
   private replenishInflight: Promise<unknown> | null = null;
   private startedAt = new Date().toISOString();
-  constructor(private store: ScenarioStore, private author: ScenarioAuthor, private runner: FillRunner, private secret: string, private prompts: ScenarioPromptSource | null = null, private scheduler?: PoolScheduler, private runs?: TaskRunSource) {
+  constructor(private store: ScenarioStore, private author: ScenarioAuthor, private runner: FillRunner, private secret: string, private prompts: ScenarioPromptSource | null = null, private scheduler?: PoolScheduler, private runs?: TaskRunSource, private forks: ForkSimulator = new InlineForkSimulator()) {
     if (secret.length < 32) throw new Error('SESSION_SECRET must contain at least 32 characters');
   }
 
@@ -150,6 +153,18 @@ export class ScenarioService {
       const next = applyChoice(play, scenario.content, actionId as ActionId);
       return { play: next, response: presentPlay(player.id, scenario.content, next) };
     });
+  }
+
+  /** Lists sandbox versions the player can use for a preview. */
+  async sandboxVersions(token: string, gameId?: string) {
+    await this.session(token, gameId);
+    return listSandboxVersions(this.forks);
+  }
+
+  /** Shows the outcome of every current choice without saving any of them. */
+  async previewForks(token: string, version: string, gameId?: string) {
+    const player = await this.session(token, gameId);
+    return previewSavedForks(this.store, this.forks, player, version);
   }
 
   /** Revokes the bearer token and leaves its scenario out of the pool. */

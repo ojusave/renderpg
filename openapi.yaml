@@ -160,6 +160,49 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/InvalidRequest'
+  /sessions/current/sandboxes:
+    get:
+      operationId: listCurrentSandboxes
+      summary: List sandbox versions that can preview this case
+      parameters:
+        - $ref: '#/components/parameters/SessionAuthorization'
+      responses:
+        '200':
+          description: Versions the player can fork. This does not change the saved case.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxVersions'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /sessions/current/forks:
+    post:
+      operationId: previewCurrentForks
+      summary: Preview every current choice in one sandbox version
+      description: Each fork is a separate outcome. The saved play-through is not written.
+      parameters:
+        - $ref: '#/components/parameters/SessionAuthorization'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForkRequest'
+      responses:
+        '200':
+          description: One projected outcome per legal action
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForkPreview'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/Unavailable'
   /sessions/{session_id}:
     parameters:
       - $ref: '#/components/parameters/SessionId'
@@ -272,6 +315,55 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/InvalidRequest'
+  /sessions/{session_id}/sandboxes:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/SessionAuthorization'
+    get:
+      operationId: listGameSandboxes
+      summary: List sandbox versions that can preview this game URL
+      responses:
+        '200':
+          description: Versions the player can fork. This does not change the saved case.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxVersions'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /sessions/{session_id}/forks:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/SessionAuthorization'
+    post:
+      operationId: previewGameForks
+      summary: Preview every current choice for this game URL
+      description: Each fork is a separate outcome. The saved play-through is not written.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForkRequest'
+      responses:
+        '200':
+          description: One projected outcome per legal action
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForkPreview'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/Unavailable'
   /openapi.json:
     get:
       operationId: getContract
@@ -470,6 +562,67 @@ components:
         type: string
         format: uuid
   schemas:
+    ForkRequest:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: Sandbox version id. `server` is the engine running in this deployment. Any other id is a named sandbox snapshot.
+    SandboxVersions:
+      type: object
+      additionalProperties: false
+      required: [versions]
+      properties:
+        versions:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, name]
+            properties:
+              id:
+                type: string
+                minLength: 1
+                maxLength: 80
+              name:
+                type: string
+                minLength: 1
+    ForkPreview:
+      type: object
+      additionalProperties: false
+      required: [version, source_version, forks]
+      properties:
+        version:
+          type: string
+        source_version:
+          type: integer
+          minimum: 0
+          description: Saved play version these forks were projected from.
+        forks:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [action_id, label, sandbox_id, status, game, message]
+            properties:
+              action_id:
+                type: string
+              label:
+                type: string
+              sandbox_id:
+                type: [string, 'null']
+              status:
+                enum: [ready, failed]
+              game:
+                anyOf:
+                  - type: 'null'
+                  - $ref: '#/components/schemas/Game'
+              message:
+                type: [string, 'null']
     SessionState:
       type: object
       additionalProperties: false

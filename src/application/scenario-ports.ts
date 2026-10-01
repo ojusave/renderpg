@@ -102,3 +102,26 @@ export interface PoolScheduler {
   readonly background: boolean;
   schedule(): Promise<void>;
 }
+
+export interface SandboxVersion { id: string; name: string }
+
+export interface ForkResult {
+  action_id: string;
+  label: string;
+  sandbox_id: string | null;
+  status: 'ready' | 'failed';
+  game: GameView | null;
+  message: string | null;
+}
+
+export interface ForkPreview {
+  version: string;
+  source_version: number;
+  forks: ForkResult[];
+}
+
+/** Projects the legal next actions. It must not save the play-through. */
+export interface ForkSimulator {
+  versions(): Promise<SandboxVersion[]>;
+  preview(version: string, fill: ScenarioFill, play: PlayState): Promise<ForkPreview>;
+}

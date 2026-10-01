@@ -76,6 +76,10 @@ export function buildApp(service: GameService, repo: GameRepository, logging = f
       app.post<{ Params: { session_id?: string }; Body: { action_id: string; expected_version: number }; Headers: { 'idempotency-key': string } }>(
         `${route}/choices`, { schema: routeSchema(`${contractPath}/choices`, 'post') }, async request => scenarios.choose(
           bearer(request.headers.authorization), request.headers['idempotency-key'], request.body.action_id, request.body.expected_version, request.params.session_id));
+      app.get<{ Params: { session_id?: string } }>(`${route}/sandboxes`, { schema: routeSchema(`${contractPath}/sandboxes`, 'get') }, async request =>
+        scenarios.sandboxVersions(bearer(request.headers.authorization), request.params.session_id));
+      app.post<{ Params: { session_id?: string }; Body: { version: string } }>(`${route}/forks`, { schema: routeSchema(`${contractPath}/forks`, 'post') }, async request =>
+        scenarios.previewForks(bearer(request.headers.authorization), request.body.version, request.params.session_id));
     };
     play('/sessions/current', '/sessions/current');
     play('/sessions/:session_id', '/sessions/{session_id}');

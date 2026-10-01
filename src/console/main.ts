@@ -110,7 +110,7 @@ const stop = () => { shutdown.abort(); rl.close(); };
 rl.on('SIGINT', stop);
 rl.on('close', () => shutdown.abort());
 process.on('SIGINT', stop);
-console.log('RenderPG console. /quit exits, /new claims another telling, /resume refreshes. Saved requests survive interruption.');
+console.log('RenderPG console. /quit exits, /new claims another telling, /resume refreshes, /sandboxes lists versions, /forks previews them. Saved requests survive interruption.');
 let game: View | undefined;
 try {
   try {
@@ -141,7 +141,26 @@ try {
         if (text !== '/retry') { console.log('A request is unresolved. Type /retry to safely retry it, or /quit.'); continue; }
         game = await flush();
       } else if (text === '/new') game = await openCase();
-      else if (text === '/resume' || text === '/retry') game = session.token ? await resume() : await openCase();
+      else if (text === '/sandboxes') {
+        const listed = await request(`${session.gameUrl ?? '/sessions/current'}/sandboxes`);
+        console.log(listed.versions.map((item: { id: string; name: string }) => `${item.id}  ${item.name}`).join('\n') || 'No sandbox versions are available.');
+        if (game) show(game);
+        continue;
+      } else if (text === '/forks' || text.startsWith('/forks ')) {
+        const base = session.gameUrl ?? '/sessions/current';
+        const listed = await request(`${base}/sandboxes`);
+        const asked = text.slice('/forks'.length).trim();
+        const picked = asked || listed.versions.find((item: { id: string }) => item.id === 'server')?.id || listed.versions[0]?.id;
+        if (!picked) console.log('No sandbox versions are available.');
+        else {
+          console.log(`Previewing ${picked}. The saved case stays as it is.`);
+          const preview = await request(`${base}/forks`, { version: picked });
+          for (const fork of preview.forks) console.log(`\n${stripVTControlCharacters(fork.label)}\n${stripVTControlCharacters(fork.game?.transcript?.at(-1)?.text ?? fork.message ?? 'unavailable')}`);
+          console.log('\nSaved case unchanged.');
+        }
+        if (game) show(game);
+        continue;
+      } else if (text === '/resume' || text === '/retry') game = session.token ? await resume() : await openCase();
       else {
         if (!text) continue;
         if (!game) { console.log('Use /new or /resume first.'); continue; }
