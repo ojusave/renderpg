@@ -2,6 +2,7 @@ import { AnthropicAuthor } from '../adapters/anthropic-author.js';
 import { InlineFillRunner } from '../adapters/inline-fill-runner.js';
 import { OfflineAuthor } from '../adapters/offline-author.js';
 import { PostgresScenarioStore } from '../adapters/scenario-postgres.js';
+import { PostgresTranscriptStore } from '../adapters/slack-postgres.js';
 import { RenderFillRunner } from '../adapters/render-fill-runner.js';
 import { ScenarioService } from '../application/scenario-service.js';
 
@@ -21,5 +22,6 @@ export function composeScenario() {
   const runner = workflowMode === 'render'
     ? new RenderFillRunner(process.env.SCENARIO_TASK?.trim() || 'fillScenario', required('RENDER_API_KEY'))
     : new InlineFillRunner(store, author);
-  return { service: new ScenarioService(store, author, runner, required('SESSION_SECRET')), store };
+  const prompts = new PostgresTranscriptStore(required('DATABASE_URL'));
+  return { service: new ScenarioService(store, author, runner, required('SESSION_SECRET'), prompts), store, prompts };
 }

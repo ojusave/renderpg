@@ -51,9 +51,11 @@ Creation and turn requests require a UUID `Idempotency-Key`. Creation returns a 
 | `src/adapters` | Anthropic, offline, and Postgres adapters |
 | `src/api` and `src/console` | OpenAPI HTTP adapter and separate HTTP client |
 
-`workflows/main.ts` registers one task, `compileAdventure`. The web service starts it when `WORKFLOW_MODE=render`. Set `WORKFLOW_TASK` to `<workflow-slug>/compileAdventure` and provide `RENDER_API_KEY`. For local task runs, start `render workflows dev -- npm run workflows:dev` and set `RENDER_USE_LOCAL_DEV=true`.
+`workflows/main.ts` registers `compileAdventure` and `fillScenario`. The web service starts them when `WORKFLOW_MODE=render`. Set `WORKFLOW_TASK` to `<workflow-slug>/compileAdventure` and `SCENARIO_TASK` to `<workflow-slug>/fillScenario`, and provide `RENDER_API_KEY`. For local task runs, start `render workflows dev -- npm run workflows:dev` and set `RENDER_USE_LOCAL_DEV=true`.
 
-Render Blueprints cannot create Workflow services yet. In the Dashboard, create a Workflow from this repository with root directory `/`, build command `npm ci && npm run build`, and start command `node dist/workflows/main.js`. Give it `DATABASE_URL`, `AI_MODE`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, and `AI_TIMEOUT_MS`. The task does not receive `SESSION_SECRET`; the web service issues the session token when the poll sees a published game.
+`workflows/slack/main.ts` is a separate workflow for Slack history. It reads channels the bot has joined and direct messages with the bot, strips identifiers before Postgres, and marks usable transcripts pending. It does not start a game. Set `SLACK_INGEST_ENABLED=true` and `SLACK_BOT_TOKEN` on that workflow. The hourly cron starts it only when `SLACK_INGEST_ENABLED=true` and `SLACK_WORKFLOW_MODE=render`, with `SLACK_SYNC_TASK` set to `<workflow-slug>/syncSlack`. Local inline sync is `SLACK_INGEST_ENABLED=true SLACK_WORKFLOW_MODE=inline npm run slack:sync`.
+
+Render Blueprints cannot create Workflow services yet. In the Dashboard, create the game workflow with root directory `/`, build command `npm ci && npm run build`, and start command `node dist/workflows/main.js`. Give it `DATABASE_URL`, `AI_MODE`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, and `AI_TIMEOUT_MS`. Create the Slack workflow with the same root and build, and start command `node dist/workflows/slack/main.js`. Give it `DATABASE_URL`, `SLACK_BOT_TOKEN`, and `SLACK_INGEST_ENABLED=true`. The game task does not receive `SESSION_SECRET`; the web service issues the session token when the poll sees a published game.
 
 ## Verification
 
@@ -68,6 +70,6 @@ For an offline completion smoke test, start the API with `AI_MODE=offline`, then
 
 ## Scope
 
-Structured schemas constrain shape, references, and reachability—not semantic truth. Prompts must be curated before submission. Slack/Notion ingestion, user identity, streaming, multiplayer, and actions against real Render systems are out of scope.
+Structured schemas constrain shape, references, and reachability—not semantic truth. Prompts must be curated before submission. Notion ingestion, user identity, streaming, multiplayer, and actions against real Render systems are out of scope. Slack ingest stores redacted candidates only, and a pending verdict does not create a game.
 
 `render.yaml` defines the Render Web Service, private Postgres connection, secrets, migrations, health check, and preview environments.

@@ -40,6 +40,11 @@ export interface ScenarioStore {
   saveChoice(sessionId: string, key: string, requestHash: string, response: GameView): Promise<void>;
 }
 
+/** Supplies a redacted Slack story for the scenario agent. */
+export interface ScenarioPromptSource {
+  nextPrompt(): Promise<string | null>;
+}
+
 /** Fills blueprint text slots. It does not choose stages or outcomes. */
 export interface ScenarioAuthor {
   fill(prompt: string): Promise<ScenarioFill>;

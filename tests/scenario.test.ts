@@ -65,6 +65,19 @@ test('sign-in claims a ready scenario and begin does not fill another', async ()
   assert.equal(fills, fillsAfterClaim);
 });
 
+test('sign-in gives the agent a redacted slack story when one is pending', async () => {
+  const store = new MemoryScenarioStore();
+  const seen: string[] = [];
+  const author = { async fill(prompt: string) { seen.push(prompt); return new OfflineAuthor().fill(prompt); } };
+  const service = new ScenarioService(store, author, new InlineFillRunner(store, author), secret, {
+    async nextPrompt() { return 'A customer asked Security to transfer the account after the employee who owned it left. Speaker A and Speaker B reviewed access, billing, and the workspace owner before the transfer.'; },
+  });
+  const session = await service.signIn();
+  assert.equal(session.status, 'ready');
+  assert.match(seen[0] ?? '', /Speaker A/);
+  assert.equal((seen[0] ?? '').includes('@'), false);
+});
+
 test('an empty pool fills one scenario during sign-in', async () => {
   const store = new MemoryScenarioStore();
   const author = new OfflineAuthor();

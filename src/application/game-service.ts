@@ -1,8 +1,9 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { InlineAdventureRunner } from '../adapters/inline-runner.js';
-import { describe, resolveCommand } from '../game/engine.js';
+import { describe, resolveCommand, twoSentences } from '../game/engine.js';
 import type { GameRecord, GameView } from '../game/types.js';
-import { visibleGame } from '../game/visibility.js';
+import { decisionTurns, visibleGame } from '../game/visibility.js';
+import { turnBudget } from '../adventure/simulator.js';
 import type { AdventureRunner, Creation, GameAI, GameRepository, GenerationInput, SavedTurn } from './ports.js';
 import { AppError, conflict, unavailable } from './errors.js';
 
@@ -13,6 +14,19 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 function replay(saved: SavedTurn, requestHash: string): GameView {
   if (saved.requestHash !== requestHash) throw conflict('idempotency_conflict', 'This request key was used with a different payload.');
   return saved.response;
+}
+
+/** Ends a still-open adventure once the player has used the turn limit. */
+function closeAtTurnLimit(game: GameRecord): void {
+  const budget = turnBudget(game.definition);
+  if (game.state.status !== 'active' || decisionTurns(game.definition, game.transcript) < budget) return;
+  const ending = game.definition.endings.find(item => item.result === 'failure') ?? game.definition.endings[0];
+  if (!ending) return;
+  game.state = { ...game.state, status: 'completed', endingId: ending.id };
+  const last = game.transcript[game.transcript.length - 1];
+  if (!last) return;
+  last.outcome = 'completed';
+  last.text = `You used all ${budget} decisions before resolving the case, so the investigation is now closed.`;
 }
 
 export class GameService {
@@ -140,16 +154,12 @@ export class GameService {
     const result = resolveCommand(game.definition, game.state, commandText);
     let textOut = result.facts;
     if (/^(help|\?)$/i.test(commandText.trim())) textOut += this.ai.capabilities.natural_language
-      ? '\nClaude interpretation is enabled for free-form requests.'
-      : '\nOffline mode: use the listed literal commands or reply to a clarification with a target.';
-    if (['applied', 'completed'].includes(result.outcome) && !/^(look|l|help|\?|inventory|i)$/i.test(commandText.trim())) {
-      try {
-        const atmosphere = (await this.ai.narrate(result.facts, describe(game.definition, result.state))).trim();
-        if (atmosphere) textOut = `${atmosphere}\n\n${result.facts}`;
-      } catch { this.report('narration_fallback'); }
-    }
+      ? ' Claude interpretation is enabled for free-form requests.'
+      : ' Offline mode: use the listed literal commands or reply to a clarification with a target.';
+    if (['applied', 'completed'].includes(result.outcome)) textOut = twoSentences(textOut);
     const next: GameRecord = { ...game, version: game.version + 1, state: result.state,
       transcript: [...game.transcript, { id: randomUUID(), input: text, text: textOut, outcome: result.outcome }] };
+    closeAtTurnLimit(next);
     return replay(await this.repo.commit(id, expectedVersion, key, requestHash, next, visibleGame(next)), requestHash);
   }
 }

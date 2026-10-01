@@ -15,7 +15,7 @@ The model emits data only. Predicates and effects come from a closed vocabulary;
 
 A new creation idempotency key is also the variation seed supplied to the generator. The model can vary game dressing, map, characters, clues, action order, complications, and endings. Every mechanical action must reference at least one source fact, and every source fact carries an exact excerpt from the prompt.
 
-This proves provenance, not semantic truth. The incoming prompt must be curated. Until a Slack adapter supplies stories, the console sends the same first story on every new game: a customer account tied to an employee who left the company. A future Slack adapter will normalize and approve source material before compilation.
+This proves provenance, not semantic truth. The incoming prompt must be curated. The console still sends the same first story on every new game: a customer account tied to an employee who left the company. Slack ingest can store a redacted candidate, and that candidate stays pending until a later approval step copies it into a game prompt.
 
 Once generated, the adventure is immutable. The same saved state and command always produce the same mechanical outcome. Player choices determine the ending; the model does not decide outcomes during play.
 
@@ -42,6 +42,10 @@ No database transaction remains open during a model call. An interrupted client 
 The MVP uses one Render Web Service and Render Postgres over the private network. The server binds to `0.0.0.0:$PORT`; `/health` checks Postgres without making a paid provider request. `render.yaml` defines migrations, secrets, preview environments, and health checks.
 
 `compileAdventure` remains available for the older adventure API. The account-ownership product uses `account_ownership_v1`, an authored blueprint. `fillScenario` asks the model only for text slots. Sign-in claims a ready filled scenario from a Postgres pool of three, or starts that workflow when the pool is empty. Begin opens the assigned scenario and does not call the model. Transfer succeeds only when the play state has verified requester authority. A Render cron job runs `scripts/replenish.ts` every 15 minutes to expire fills older than 15 minutes and restore the pool. `WORKFLOW_MODE=inline` fills in the web process for tests and local play. Blueprints still cannot create the Workflow service; create `fillScenario` in the Dashboard with root `/`, build `npm ci && npm run build`, and start `node dist/workflows/main.js`.
+
+## Slack ingest
+
+Slack history is a second workflow, `workflows/slack/main.ts`, with tasks `syncSlack` and `ingestConversation`. It is not imported by the game server or by `workflows/main.ts`. `SLACK_USER_TOKEN` lists the public channels that token can read. The task redacts emails, phones, links, and mentions in memory, drops transcripts that contain secrets, and only then writes Postgres. A missing user directory still stores the redacted text. The scenario agent receives the longest usable transcript as its source prompt. Rejected and dropped rows are not sent. `SLACK_INGEST_ENABLED` must be `true` on both the cron and the workflow service. The cron starts `syncSlack` when `SLACK_WORKFLOW_MODE=render`. Blueprints cannot create this workflow either: root `/`, build `npm ci && npm run build`, start `node dist/workflows/slack/main.js`. Give it `DATABASE_URL`, `SLACK_BOT_TOKEN`, and `SLACK_INGEST_ENABLED=true`. Bot scopes are `channels:history`, `channels:read`, `groups:history`, `groups:read`, `im:history`, `im:read`, and `users:read`. Do not request `users:read.email`. The blueprint cron ships with ingest disabled until `SLACK_SYNC_TASK` is set to `<workflow-slug>/syncSlack`.
 
 ## Versions
 

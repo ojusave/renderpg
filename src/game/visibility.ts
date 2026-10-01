@@ -1,7 +1,7 @@
-import { successTurnBudget } from '../adventure/simulator.js';
+import { turnBudget } from '../adventure/simulator.js';
 import type { ChoiceTone } from '../adventure/definition.js';
 import type { GameRecord, GameView } from './types.js';
-import { actionCommand, availableActions, currentStage } from './engine.js';
+import { actionCommand, availableActions, currentStage, isMoveOnly } from './engine.js';
 import { currentChanges, currentStats } from './stats.js';
 
 /** Projects a stored game into the player-visible API contract. */
@@ -28,10 +28,21 @@ export function visibleGame(game: GameRecord): GameView {
     transcript: structuredClone(game.transcript),
     stats: currentStats(state),
     stat_changes: currentChanges(state),
-    turn: game.transcript.filter(turn => turn.outcome === 'applied' || turn.outcome === 'completed').length,
-    turn_budget: successTurnBudget(definition),
+    turn: decisionTurns(definition, game.transcript),
+    turn_budget: turnBudget(definition),
     choice_tally: tally(definition, game.transcript),
   };
+}
+
+/** Counts story decisions. Moving, looking, inventory, and help do not spend a turn. */
+export function decisionTurns(definition: GameRecord['definition'], transcript: GameRecord['transcript']): number {
+  return transcript.filter(turn => {
+    const input = (turn.input ?? '').trim();
+    if (turn.outcome !== 'applied' && turn.outcome !== 'completed') return false;
+    if (/^(look|l|help|\?|inventory|i)$/i.test(input)) return false;
+    const action = definition.actions.find(item => item.id === input || actionCommand(definition, item).toLowerCase() === input.toLowerCase());
+    return !(action && isMoveOnly(action)) && !/^(go|walk|move|return|travel)\b/i.test(input);
+  }).length;
 }
 
 function tally(definition: GameRecord['definition'], transcript: GameRecord['transcript']): Record<ChoiceTone, number> {

@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { AppError, conflict } from './errors.js';
-import type { FillRunner, ScenarioAuthor, ScenarioStore } from './scenario-ports.js';
+import type { FillRunner, ScenarioAuthor, ScenarioPromptSource, ScenarioStore } from './scenario-ports.js';
 import { blueprintId, poolTarget, staleFillMs } from '../scenario/blueprint.js';
 import { defaultScenarioPrompt } from '../scenario/default-prompt.js';
 import { applyChoice, legalActions, openPlay, presentPlay } from '../scenario/engine.js';
@@ -12,7 +12,7 @@ export type SessionView = { status: 'preparing' | 'ready' | 'failed'; session_to
 
 /** Claims a filled scenario at sign-in and plays it from the blueprint. */
 export class ScenarioService {
-  constructor(private store: ScenarioStore, private author: ScenarioAuthor, private runner: FillRunner, private secret: string) {
+  constructor(private store: ScenarioStore, private author: ScenarioAuthor, private runner: FillRunner, private secret: string, private prompts: ScenarioPromptSource | null = null) {
     if (secret.length < 32) throw new Error('SESSION_SECRET must contain at least 32 characters');
   }
 
@@ -40,10 +40,11 @@ export class ScenarioService {
       return this.view(token, 'ready', null, null, null);
     }
     const scenarioId = randomUUID();
-    await this.store.insertFilling(scenarioId, blueprintId, defaultScenarioPrompt, id);
+    const prompt = await this.sourcePrompt();
+    await this.store.insertFilling(scenarioId, blueprintId, prompt, id);
     await this.store.setSessionScenario(id, scenarioId);
     try {
-      const run = await this.runner.start({ scenarioId, prompt: defaultScenarioPrompt });
+      const run = await this.runner.start({ scenarioId, prompt });
       await this.store.setRun(scenarioId, run.runId);
       if (this.runner.background) return this.view(token, 'preparing', run.runId, null, null);
     } catch (error) {
@@ -94,6 +95,16 @@ export class ScenarioService {
     return response;
   }
 
+  private async sourcePrompt(): Promise<string> {
+    try {
+      const prompt = (await this.prompts?.nextPrompt())?.trim();
+      if (prompt) return prompt;
+    } catch {
+      return defaultScenarioPrompt;
+    }
+    return defaultScenarioPrompt;
+  }
+
   /** Fills one blueprint and marks the scenario ready or failed. */
   async publish(scenarioId: string, prompt: string): Promise<void> {
     await publishFill(this.store, this.author, scenarioId, prompt);
@@ -105,8 +116,9 @@ export class ScenarioService {
     let started = 0;
     while (await this.store.poolDepth(blueprintId) < poolTarget && started < poolTarget) {
       const id = randomUUID();
-      await this.store.insertFilling(id, blueprintId, defaultScenarioPrompt, null);
-      const run = await this.runner.start({ scenarioId: id, prompt: defaultScenarioPrompt });
+      const prompt = await this.sourcePrompt();
+      await this.store.insertFilling(id, blueprintId, prompt, null);
+      const run = await this.runner.start({ scenarioId: id, prompt });
       await this.store.setRun(id, run.runId);
       started += 1;
     }

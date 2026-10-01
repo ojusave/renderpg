@@ -2,7 +2,7 @@ import { composeApplication } from './composition/root.js';
 
 const port = Number(process.env.PORT ?? 3000);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be 1..65535');
-const { app, repo, scenarioStore, mode } = composeApplication();
+const { app, repo, scenarioStore, prompts, mode } = composeApplication();
 let closing = false;
 async function shutdown() {
   if (closing) return;
@@ -10,6 +10,7 @@ async function shutdown() {
   await app.close();
   await repo.close();
   await scenarioStore.close();
+  await prompts.close();
 }
 process.on('SIGINT', () => { void shutdown(); });
 process.on('SIGTERM', () => { void shutdown(); });

@@ -8,7 +8,9 @@ const object = (properties: Record<string, unknown>) => ({ type: 'object', prope
 
 function excerpts(prompt: string): string[] {
   const sentences = prompt.split(/(?<=[.!?])\s+/).map(value => value.trim()).filter(value => value.length > 3);
-  return [...new Set(sentences)];
+  const unique = [...new Set(sentences)];
+  if (prompt.length > 800 || unique.length > 6) return [];
+  return unique;
 }
 
 /** Asks Claude to fill blueprint text slots and nothing else. */

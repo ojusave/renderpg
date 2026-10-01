@@ -76,8 +76,14 @@ export function applyAction(definition: AdventureDefinition, before: AdventureSt
   return {
     state,
     outcome: ending ? 'completed' : 'applied',
-    facts: ending ? `${action.successText}\n${ending.title}: ${ending.summary}` : action.successText,
+    facts: action.successText,
   };
+}
+
+/** Reports whether an action only changes location (and stats), which does not spend a decision. */
+export function isMoveOnly(action: ActionDefinition): boolean {
+  return action.effects.some(effect => effect.kind === 'move')
+    && action.effects.every(effect => effect.kind === 'move' || effect.kind === 'adjustStat');
 }
 
 function normalize(value: string): string {
@@ -129,13 +135,50 @@ export function currentStage(definition: AdventureDefinition, state: AdventureSt
     ?? definition.stages[0]?.label ?? 'In progress';
 }
 
-/** Lists the actions a player can take in the current scene. */
+/** Keeps Game Master copy to two sentences so a result is not restated. */
+export function twoSentences(text: string): string {
+  const sentences = text.replace(/\s+/g, ' ').trim().match(/[^.!?]+[.!?]+/g) ?? [text.trim()];
+  return sentences.slice(0, 2).map(sentence => sentence.trim()).filter(Boolean).join(' ');
+}
+
+function makesProgress(state: AdventureState, action: ActionDefinition): boolean {
+  return action.effects.some(effect => {
+    switch (effect.kind) {
+      case 'move': return effect.locationId !== state.locationId;
+      case 'take': return !state.inventory.includes(effect.entityId);
+      case 'drop': return state.inventory.includes(effect.entityId);
+      case 'reveal': return !state.discoveredFacts.includes(effect.factId);
+      case 'setFlag': return (state.flags[effect.flag] ?? false) !== effect.value;
+      case 'addCounter': case 'complete': return true;
+      case 'adjustStat': return false;
+    }
+  });
+}
+
+/** Lists at most three actions for the current scene, labeled A, B, and C. */
 export function availableActions(definition: AdventureDefinition, state: AdventureState): ActionDefinition[] {
+  if (state.status !== 'active') return [];
   const visible = definition.entities.filter(entity => state.entityLocations[entity.id] === state.locationId);
-  return definition.actions.filter(action => actionAllowed(state, action)
+  const reachable = definition.actions.filter(action => actionAllowed(state, action)
     && !action.effects.some(effect => effect.kind === 'move' && effect.locationId === state.locationId)
     && (!action.targetId || definition.locations.some(location => location.id === action.targetId)
       || action.targetId === state.locationId || visible.some(entity => entity.id === action.targetId) || state.inventory.includes(action.targetId)));
+  const fresh = reachable.filter(action => makesProgress(state, action));
+  const allowed = fresh.length ? fresh : reachable;
+  const moves = (action: ActionDefinition) => action.effects.some(effect => effect.kind === 'move');
+  const completes = (action: ActionDefinition) => action.effects.some(effect => effect.kind === 'complete');
+  const ranked = [
+    ...allowed.filter(action => !moves(action) && !completes(action)),
+    ...allowed.filter(action => moves(action)),
+    ...allowed.filter(action => completes(action) && !moves(action)),
+  ];
+  const picked: ActionDefinition[] = [];
+  for (const action of ranked) {
+    if (picked.some(existing => existing.id === action.id)) continue;
+    picked.push(action);
+    if (picked.length === 3) break;
+  }
+  return picked;
 }
 
 function actionCommand(definition: AdventureDefinition, action: ActionDefinition): string {

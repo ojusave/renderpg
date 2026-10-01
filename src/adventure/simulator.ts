@@ -1,5 +1,5 @@
 import type { AdventureDefinition, AdventureState } from './definition.js';
-import { actionAllowed, applyAction } from '../game/engine.js';
+import { actionAllowed, applyAction, isMoveOnly } from '../game/engine.js';
 
 export interface SimulationReport {
   valid: boolean;
@@ -52,7 +52,9 @@ export function simulateAdventure(definition: AdventureDefinition, maxDepth = 20
   return { valid: errors.length === 0, reachableEndings: [...reachable], exploredStates: seen.size, errors };
 }
 
-/** Counts the shortest path to a success ending. The play screen uses this as the turn budget. */
+export const maxPlayerTurns = 4;
+
+/** Counts the fewest decisions (moves are free) needed to reach a success ending. */
 export function successTurnBudget(definition: AdventureDefinition): number {
   const queue: { state: AdventureState; depth: number }[] = [{ state: structuredClone(definition.initialState), depth: 0 }];
   const seen = new Set<string>();
@@ -70,8 +72,15 @@ export function successTurnBudget(definition: AdventureDefinition): number {
     for (const action of definition.actions) {
       if (!actionAllowed(current.state, action)) continue;
       const next = applyAction(definition, current.state, action).state;
-      if (key(next) !== stateKey) queue.push({ state: next, depth: current.depth + 1 });
+      if (key(next) === stateKey) continue;
+      if (isMoveOnly(action)) queue.unshift({ state: next, depth: current.depth });
+      else queue.push({ state: next, depth: current.depth + 1 });
     }
   }
-  return 6;
+  return maxPlayerTurns;
+}
+
+/** Decisions a player may make before the case closes; always enough to reach success. */
+export function turnBudget(definition: AdventureDefinition): number {
+  return Math.max(maxPlayerTurns, successTurnBudget(definition));
 }
