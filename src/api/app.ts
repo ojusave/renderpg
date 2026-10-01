@@ -23,15 +23,24 @@ export function buildApp(service: GameService, repo: GameRepository, logging = f
     const failure = error as Partial<FastifyError>;
     if (failure.validation || failure.statusCode === 400 || failure.statusCode === 415) return reply.code(422).send({ code: 'invalid_request', message: 'Request does not match the API contract.', retryable: false });
     if (failure.statusCode === 413) return reply.code(413).send({ code: 'payload_too_large', message: 'Request body is too large.', retryable: false });
-    request.log.error({ event: 'request_failed', requestId: request.id });
-    return reply.code(503).send({ code: 'dependency_unavailable', message: 'The service is temporarily unavailable. Retry with the same request key.', retryable: true });
+    request.log.error({ event: 'request_failed', requestId: request.id, err: error });
+    return reply.code(500).send({ code: 'internal_error', message: 'The service hit an unexpected error.', retryable: false });
   });
   app.addHook('onRequest', async request => {
     if (!oktaRequired() || request.url.split('?')[0] === '/health') return;
     const header = request.headers['x-forwarded-access-token'];
     await verifyEmployeeToken(Array.isArray(header) ? header[0] : header);
   });
-  app.get('/health', { schema: routeSchema('/health', 'get') }, async () => { await repo.health(); return { status: 'ok', ai: service.capabilities }; });
+  app.get('/health', { schema: routeSchema('/health', 'get') }, async () => {
+    try {
+      await repo.health();
+      await scenarios?.ready();
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError(503, 'dependency_unavailable', 'The service is temporarily unavailable.', true);
+    }
+    return { status: 'ok', ai: service.capabilities };
+  });
   app.get('/openapi.json', async () => contract);
   const bearer = (authorization?: string) => {
     const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(authorization ?? '');
@@ -49,6 +58,10 @@ export function buildApp(service: GameService, repo: GameRepository, logging = f
     { schema: routeSchema('/games/{game_id}', 'get') }, async request => service.get(request.params.game_id, bearer(request.headers.authorization)));
   if (scenarios) {
     app.post('/sessions', { schema: routeSchema('/sessions', 'post') }, async () => scenarios.signIn());
+    app.delete('/sessions/current', { schema: routeSchema('/sessions/current', 'delete') }, async request => {
+      await scenarios.end(bearer(request.headers.authorization));
+      return { status: 'ended' as const };
+    });
     app.get('/sessions/current', { schema: routeSchema('/sessions/current', 'get') }, async request => scenarios.current(bearer(request.headers.authorization)));
     app.post('/sessions/current/begin', { schema: routeSchema('/sessions/current/begin', 'post') }, async request => scenarios.begin(bearer(request.headers.authorization)));
     app.post<{ Body: { action_id: string; expected_version: number }; Headers: { 'idempotency-key': string } }>('/sessions/current/choices',

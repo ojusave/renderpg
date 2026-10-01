@@ -22,7 +22,7 @@ function decode(part: string): string {
 async function signingKeys(): Promise<Jwk[]> {
   const url = process.env.OKTA_JWKS_URL ?? `${ISSUER}/oauth2/v1/keys`;
   if (cached?.url === url) return cached.keys;
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
   if (!response.ok) throw new AppError(401, 'unauthorized', 'A Render sign-in is required.');
   const body = await response.json() as { keys?: Jwk[] };
   const keys = body.keys ?? [];

@@ -12,17 +12,15 @@ async function shutdown() {
   await scenarioStore.close();
   await prompts.close();
 }
-process.on('SIGINT', () => { void shutdown(); });
-process.on('SIGTERM', () => { void shutdown(); });
+const stop = (exitCode: number) => { void shutdown().finally(() => process.exit(exitCode)); };
+process.on('SIGINT', () => stop(0));
+process.on('SIGTERM', () => stop(0));
 try {
   await repo.health();
-  void scenarios.replenish().catch(error => {
-    console.warn(JSON.stringify({ event: 'pool_warm_failed', message: error instanceof Error ? error.message : 'unknown' }));
-  });
+  scenarios.warm();
   await app.listen({ host: process.env.HOST ?? '0.0.0.0', port });
   app.log.info({ aiMode: mode }, 'Game API ready');
 } catch {
   console.error('Startup failed. Check Postgres, migrations, and .env configuration.');
-  await shutdown();
-  process.exitCode = 1;
+  stop(1);
 }

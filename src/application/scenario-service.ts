@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { AppError, conflict } from './errors.js';
+import { AppError, conflict, unavailable } from './errors.js';
 import type { FillRunner, PoolScheduler, ScenarioAuthor, ScenarioPromptSource, ScenarioStore } from './scenario-ports.js';
 import { reservePoolFills } from './reserve-pool.js';
 import { blueprintId } from '../scenario/blueprint.js';
@@ -59,8 +59,10 @@ export class ScenarioService {
     const prompt = await this.sourcePrompt();
     await this.store.insertFilling(scenarioId, blueprintId, prompt, id);
     await this.store.setSessionScenario(id, scenarioId);
+    let runId: string | null = null;
     try {
       const run = await this.runner.start({ scenarioId, prompt });
+      runId = run.runId;
       await this.store.setRun(scenarioId, run.runId);
       if (this.scheduler?.background) this.kickPool();
       if (this.runner.background) return this.view(token, 'preparing', run.runId, null, null);
@@ -69,7 +71,7 @@ export class ScenarioService {
       const failed = await this.store.scenario(scenarioId);
       return this.view(token, 'failed', null, failed?.error ?? (error instanceof Error ? error.message : 'Fill failed'), null);
     }
-    return this.view(token, 'ready', scenarioId, null, null);
+    return this.view(token, 'ready', runId, null, null);
   }
 
   async current(token: string): Promise<SessionView> {
@@ -99,21 +101,30 @@ export class ScenarioService {
   async choose(token: string, key: string, actionId: string, expectedVersion: number): Promise<GameView> {
     const player = await this.session(token);
     const requestHash = createHash('sha256').update(`${actionId}:${expectedVersion}`).digest('hex');
-    const prior = await this.store.choice(player.id, key);
-    if (prior) {
-      if (prior.requestHash !== requestHash) throw conflict('idempotency_conflict', 'This request key was used with a different payload.');
-      return prior.response;
-    }
-    const scenario = player.scenarioId ? await this.store.scenario(player.scenarioId) : null;
-    if (scenario && scenario.blueprintId !== blueprintId) throw conflict('scenario_retired', retiredMessage);
-    if (!scenario?.content || !player.play) throw new AppError(409, 'scenario_not_ready', 'Begin the scenario before choosing a response.');
-    if (player.play.version !== expectedVersion) throw conflict('stale_state', 'Another choice changed this scenario. Refresh before trying again.');
-    if (!legalActions(player.play).includes(actionId as ActionId)) throw new AppError(422, 'invalid_request', 'That response is not available.');
-    const next = applyChoice(player.play, scenario.content, actionId as ActionId);
-    await this.store.savePlay(player.id, next);
-    const response = presentPlay(player.id, scenario.content, next);
-    await this.store.saveChoice(player.id, key, requestHash, response);
-    return response;
+    return this.store.commitChoice(player.id, key, requestHash, async play => {
+      if (play.version !== expectedVersion) throw conflict('stale_state', 'Another choice changed this scenario. Refresh before trying again.');
+      if (play.status === 'completed') throw conflict('game_finished', 'This scenario has ended. Start a new session.');
+      const scenario = player.scenarioId ? await this.store.scenario(player.scenarioId) : null;
+      if (scenario && scenario.blueprintId !== blueprintId) throw conflict('scenario_retired', retiredMessage);
+      if (!scenario?.content) throw new AppError(409, 'scenario_not_ready', 'Begin the scenario before choosing a response.');
+      if (!legalActions(play).includes(actionId as ActionId)) throw new AppError(422, 'invalid_request', 'That response is not available.');
+      const next = applyChoice(play, scenario.content, actionId as ActionId);
+      return { play: next, response: presentPlay(player.id, scenario.content, next) };
+    });
+  }
+
+  /** Revokes the bearer token and leaves its scenario out of the pool. */
+  async end(token: string): Promise<void> {
+    const player = await this.session(token);
+    await this.store.deleteSession(player.id);
+  }
+
+  /** Checks scenario storage and required workflow configuration. */
+  async ready(): Promise<void> {
+    await this.store.health();
+    if ((process.env.WORKFLOW_MODE ?? 'inline') !== 'render') return;
+    const missing = ['RENDER_API_KEY', 'SCENARIO_TASK', 'REPLENISH_TASK'].filter(key => !process.env[key]?.trim());
+    if (missing.length) throw unavailable();
   }
 
   private async sourcePrompt(): Promise<string> {
@@ -140,6 +151,9 @@ export class ScenarioService {
     }
     return jobs.length;
   }
+
+  /** Restores the pool without delaying the caller. Render mode starts the parent workflow. */
+  warm(): void { this.kickPool(); }
 
   /** Restores the pool without delaying the sign-in response. */
   private kickPool(): void {

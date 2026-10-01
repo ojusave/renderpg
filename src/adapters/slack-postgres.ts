@@ -16,8 +16,10 @@ interface ConversationRecord {
 /** Stores redacted transcripts. The table constraint rejects raw bodies on dropped rows. */
 export class PostgresTranscriptStore implements TranscriptStore {
   readonly pool: pg.Pool;
-  constructor(connectionString: string) {
-    this.pool = new pg.Pool({ connectionString, max: 5, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 });
+  private readonly ownsPool: boolean;
+  constructor(connectionString: string, pool?: pg.Pool) {
+    this.ownsPool = !pool;
+    this.pool = pool ?? new pg.Pool({ connectionString, max: 10, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 });
   }
 
   async get(conversationId: string): Promise<StoredConversation | null> {
@@ -83,7 +85,7 @@ export class PostgresTranscriptStore implements TranscriptStore {
   }
 
   async close() {
-    await this.pool.end();
+    if (this.ownsPool) await this.pool.end();
   }
 
   private conversation(record: ConversationRecord): StoredConversation {

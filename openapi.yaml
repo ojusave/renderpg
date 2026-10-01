@@ -56,6 +56,25 @@ paths:
         '503':
           $ref: '#/components/responses/Unavailable'
   /sessions/current:
+    delete:
+      operationId: endSession
+      summary: End the current session so its token cannot be reused
+      parameters:
+        - $ref: '#/components/parameters/SessionAuthorization'
+      responses:
+        '200':
+          description: Session ended
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status:
+                    const: ended
+        '401':
+          $ref: '#/components/responses/Unauthorized'
     get:
       operationId: readSession
       summary: Read scenario preparation or the opened play-through

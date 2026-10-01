@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { AppError, conflict } from '../application/errors.js';
 import type { GameView } from '../game/types.js';
 import type { PlayState } from '../scenario/engine.js';
 import type { ScenarioFill } from '../scenario/fill.js';
@@ -12,8 +13,10 @@ interface ScenarioRecord {
 /** Stores filled scenarios and player sessions in Render Postgres. */
 export class PostgresScenarioStore implements ScenarioStore {
   readonly pool: pg.Pool;
-  constructor(connectionString: string) {
-    this.pool = new pg.Pool({ connectionString, max: 10, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 });
+  private readonly ownsPool: boolean;
+  constructor(connectionString: string, pool?: pg.Pool) {
+    this.ownsPool = !pool;
+    this.pool = pool ?? new pg.Pool({ connectionString, max: 10, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 });
   }
   private row(record: ScenarioRecord): ScenarioRow {
     return {
@@ -35,6 +38,45 @@ export class PostgresScenarioStore implements ScenarioStore {
   async savePlay(sessionId: string, play: PlayState) {
     await this.pool.query('UPDATE player_sessions SET play=$2 WHERE id=$1', [sessionId, play]);
   }
+  async commitChoice(sessionId: string, key: string, requestHash: string, apply: (play: PlayState) => Promise<{ play: PlayState; response: GameView }> | { play: PlayState; response: GameView }) {
+    const client = await this.pool.connect();
+    let open = true;
+    try {
+      await client.query('BEGIN');
+      const row = (await client.query('SELECT play FROM player_sessions WHERE id=$1 FOR UPDATE', [sessionId])).rows[0];
+      const prior = (await client.query('SELECT request_hash, response FROM scenario_choices WHERE session_id=$1 AND request_key=$2', [sessionId, key])).rows[0];
+      if (prior) {
+        await client.query('COMMIT');
+        open = false;
+        if (prior.request_hash !== requestHash) throw conflict('idempotency_conflict', 'This request key was used with a different payload.');
+        return prior.response as GameView;
+      }
+      if (!row?.play) throw new AppError(409, 'scenario_not_ready', 'Begin the scenario before choosing a response.');
+      const result = await apply(row.play as PlayState);
+      const updated = await client.query('UPDATE player_sessions SET play=$2 WHERE id=$1 AND play->>\'version\' = $3', [sessionId, result.play, String(row.play.version)]);
+      if (updated.rowCount !== 1) throw conflict('stale_state', 'Another choice changed this scenario. Refresh before trying again.');
+      await client.query('INSERT INTO scenario_choices(session_id, request_key, request_hash, response) VALUES($1,$2,$3,$4)', [sessionId, key, requestHash, result.response]);
+      await client.query('COMMIT');
+      open = false;
+      return result.response;
+    } catch (error) {
+      if (open) await client.query('ROLLBACK');
+      throw error;
+    } finally { client.release(); }
+  }
+  async deleteSession(sessionId: string) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM scenario_choices WHERE session_id=$1', [sessionId]);
+      await client.query('UPDATE filled_scenarios SET session_id=NULL WHERE session_id=$1', [sessionId]);
+      await client.query('DELETE FROM player_sessions WHERE id=$1', [sessionId]);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally { client.release(); }
+  }
   async claimReady(sessionId: string, blueprintId: string): Promise<ScenarioRow | null> {
     const client = await this.pool.connect();
     try {
@@ -55,12 +97,16 @@ export class PostgresScenarioStore implements ScenarioStore {
     await this.pool.query('UPDATE filled_scenarios SET run_id=$2, updated_at=now() WHERE id=$1', [id, runId]);
   }
   async markReady(id: string, content: ScenarioFill) {
-    await this.pool.query(`UPDATE filled_scenarios SET status=CASE WHEN session_id IS NULL THEN 'ready' ELSE 'claimed' END,
-      content=$2, error=NULL, updated_at=now() WHERE id=$1`, [id, content]);
+    const updated = await this.pool.query(`UPDATE filled_scenarios SET status=CASE WHEN session_id IS NULL THEN 'ready' ELSE 'claimed' END,
+      content=$2, error=NULL, updated_at=now() WHERE id=$1 AND status='filling'`, [id, content]);
+    return updated.rowCount === 1;
   }
   async markFailed(id: string, error: string) {
-    await this.pool.query(`UPDATE filled_scenarios SET status='failed', error=$2, updated_at=now() WHERE id=$1`, [id, error]);
+    const updated = await this.pool.query(`UPDATE filled_scenarios SET status='failed', error=$2, updated_at=now()
+      WHERE id=$1 AND status='filling'`, [id, error]);
+    return updated.rowCount === 1;
   }
+  async health() { await this.pool.query('SELECT 1 FROM filled_scenarios LIMIT 1'); }
   async scenario(id: string) {
     const record = (await this.pool.query('SELECT * FROM filled_scenarios WHERE id=$1', [id])).rows[0];
     return record ? this.row(record) : null;
@@ -98,5 +144,5 @@ export class PostgresScenarioStore implements ScenarioStore {
     await this.pool.query(`INSERT INTO scenario_choices(session_id, request_key, request_hash, response) VALUES($1,$2,$3,$4)
       ON CONFLICT (session_id, request_key) DO NOTHING`, [sessionId, key, requestHash, response]);
   }
-  async close() { await this.pool.end(); }
+  async close() { if (this.ownsPool) await this.pool.end(); }
 }

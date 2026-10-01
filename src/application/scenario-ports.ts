@@ -28,12 +28,18 @@ export interface ScenarioStore {
   sessionByHash(tokenHash: string): Promise<PlayerSession | null>;
   setSessionScenario(sessionId: string, scenarioId: string): Promise<void>;
   savePlay(sessionId: string, play: PlayState): Promise<void>;
+  /** Locks one session, replays a stored choice, or commits the next play and its replay together. */
+  commitChoice(sessionId: string, key: string, requestHash: string, apply: (play: PlayState) => Promise<{ play: PlayState; response: GameView }> | { play: PlayState; response: GameView }): Promise<GameView>;
+  deleteSession(sessionId: string): Promise<void>;
   claimReady(sessionId: string, blueprintId: string): Promise<ScenarioRow | null>;
   insertFilling(id: string, blueprintId: string, prompt: string, sessionId: string | null): Promise<void>;
   setRun(id: string, runId: string): Promise<void>;
-  markReady(id: string, content: ScenarioFill): Promise<void>;
-  markFailed(id: string, error: string): Promise<void>;
+  /** Publishes a fill only while it is still in progress. */
+  markReady(id: string, content: ScenarioFill): Promise<boolean>;
+  /** Records failure only while the fill is still in progress. */
+  markFailed(id: string, error: string): Promise<boolean>;
   scenario(id: string): Promise<ScenarioRow | null>;
+  health(): Promise<void>;
   poolDepth(blueprintId: string): Promise<number>;
   expireStale(beforeIso: string): Promise<number>;
   /** Runs the critical section alone so two replenishers cannot overfill the pool. */

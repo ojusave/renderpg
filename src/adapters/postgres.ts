@@ -6,9 +6,11 @@ import { conflict } from '../application/errors.js';
 
 export class PostgresRepository implements GameRepository {
   readonly pool: pg.Pool;
-  constructor(connectionString: string) {
-    this.pool = new pg.Pool({ connectionString, max: 10, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 });
-    this.pool.on('error', () => console.error('Postgres idle connection failed'));
+  private readonly ownsPool: boolean;
+  constructor(connectionString: string, pool?: pg.Pool) {
+    this.ownsPool = !pool;
+    this.pool = pool ?? new pg.Pool({ connectionString, max: 10, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 });
+    if (this.ownsPool) this.pool.on('error', () => console.error('Postgres idle connection failed'));
   }
   async creation(key: string): Promise<Creation | null> {
     const row = (await this.pool.query('SELECT request_hash, initial_record, opening FROM games WHERE creation_key=$1', [key])).rows[0];
@@ -111,5 +113,5 @@ export class PostgresRepository implements GameRepository {
     await this.pool.query('UPDATE generation_jobs SET status=$2, error=$3, updated_at=now() WHERE creation_key=$1', [key, status, error ?? null]);
   }
   async health(): Promise<void> { await this.pool.query('SELECT 1'); }
-  async close(): Promise<void> { await this.pool.end(); }
+  async close(): Promise<void> { if (this.ownsPool) await this.pool.end(); }
 }

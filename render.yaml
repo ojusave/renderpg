@@ -15,6 +15,14 @@ projects:
                 sync: false
               - key: AI_TIMEOUT_MS
                 value: "60000"
+              - key: SCENARIO_PROVIDER
+                value: anthropic
+              - key: OPENROUTER_API_KEY
+                sync: false
+              - key: OPENROUTER_MODEL
+                sync: false
+              - key: OKTA_AUTH
+                value: "on"
               - key: WORKFLOW_MODE
                 value: render
               - key: WORKFLOW_TASK
@@ -35,7 +43,7 @@ projects:
             preDeployCommand: node --env-file-if-exists=.env dist/scripts/migrate.js
             startCommand: node --env-file-if-exists=.env dist/src/server.js
             healthCheckPath: /health
-            autoDeployTrigger: checksPass
+            autoDeployTrigger: commit
             envVars:
               - fromGroup: renderpg-config
               - key: DATABASE_URL
@@ -106,20 +114,11 @@ projects:
             buildCommand: npm ci && npm run build
             startCommand: node dist/workflows/main.js
             envVars:
-              - key: NODE_VERSION
-                value: "24"
+              - fromGroup: renderpg-config
               - key: DATABASE_URL
                 fromDatabase:
                   name: renderpg-db
                   property: connectionString
-              - key: AI_MODE
-                value: anthropic
-              - key: ANTHROPIC_API_KEY
-                sync: false
-              - key: ANTHROPIC_MODEL
-                sync: false
-              - key: AI_TIMEOUT_MS
-                value: "60000"
         databases:
           - name: renderpg-db
             region: oregon

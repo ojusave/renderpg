@@ -22,10 +22,11 @@ class ApiFailure extends Error {
   get definitiveRejection() { return this.status >= 400 && this.status < 500 && ![408, 429].includes(this.status); }
 }
 async function request(path: string, body?: unknown, key?: string, method = body === undefined ? 'GET' : 'POST'): Promise<any> {
+  const employee = process.env.RENDER_ACCESS_TOKEN?.trim();
   const response = await fetch(`${api}${path}`, { method,
-    headers: { ...(method === 'POST' && body !== undefined ? { 'content-type': 'application/json' } : {}), ...(session.token ? { authorization: `Bearer ${session.token}` } : {}), ...(key ? { 'idempotency-key': key } : {}) },
+    headers: { ...(method === 'POST' && body !== undefined ? { 'content-type': 'application/json' } : {}), ...(session.token ? { authorization: `Bearer ${session.token}` } : {}), ...(employee ? { 'x-forwarded-access-token': employee } : {}), ...(key ? { 'idempotency-key': key } : {}) },
     ...(method === 'POST' && body !== undefined ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.any([AbortSignal.timeout(150000), shutdown.signal]) });
-  const data = await response.json() as any;
+  const data = await response.json().catch(() => ({ code: 'invalid_response', message: `HTTP ${response.status}` })) as any;
   if (!response.ok) throw new ApiFailure(response.status, `${data.code}: ${data.message}`);
   return data;
 }
@@ -40,7 +41,15 @@ async function waitUntilReady(): Promise<void> {
   }
   throw new ApiFailure(503, 'scenario_timeout: The case is still being prepared.');
 }
+async function endCase(): Promise<void> {
+  if (!session.token) return;
+  try { await request('/sessions/current', undefined, undefined, 'DELETE'); } catch { /* A missing session can still be replaced. */ }
+  delete session.token;
+  delete session.pending;
+  await save();
+}
 async function openCase(): Promise<View> {
+  await endCase();
   console.log('\nClaiming a prepared case.');
   const opened = await request('/sessions', undefined, undefined, 'POST');
   session.token = opened.session_token;

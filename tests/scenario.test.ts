@@ -209,6 +209,77 @@ test('a fill stores the scenario id as its variation seed', async () => {
   assert.equal((await store.scenario(scenarioId))?.status, 'ready');
 });
 
+test('one version accepts one choice, replays its key, and a finished case stays finished', async () => {
+  const store = new MemoryScenarioStore();
+  const service = new ScenarioService(store, new OfflineAuthor(), new InlineFillRunner(store, new OfflineAuthor()), secret);
+  const session = await service.signIn();
+  const game = await service.begin(session.session_token);
+  const key = randomUUID();
+  const duplicates = await Promise.all([
+    service.choose(session.session_token, key, 'open_record', game.version),
+    service.choose(session.session_token, key, 'open_record', game.version),
+  ]);
+  assert.deepEqual(duplicates[0], duplicates[1]);
+  assert.equal(duplicates[0]!.version, 1);
+  await assert.rejects(service.choose(session.session_token, key, 'trace_owner', game.version), { code: 'idempotency_conflict' });
+  const races = await Promise.allSettled([
+    service.choose(session.session_token, randomUUID(), 'trace_owner', duplicates[0]!.version),
+    service.choose(session.session_token, randomUUID(), 'take_word', duplicates[0]!.version),
+  ]);
+  assert.equal(races.filter(race => race.status === 'fulfilled').length, 1);
+  assert.equal(races.filter(race => race.status === 'rejected').length, 1);
+  const ended = await service.choose(session.session_token, randomUUID(), 'escalate', (await service.current(session.session_token)).game!.version);
+  assert.equal(ended.status, 'completed');
+  await assert.rejects(service.choose(session.session_token, randomUUID(), 'escalate', ended.version), { code: 'game_finished' });
+  await service.end(session.session_token);
+  await assert.rejects(service.current(session.session_token), { code: 'unauthorized' });
+});
+
+test('a late fill cannot revive a scenario that already failed', async () => {
+  const store = new MemoryScenarioStore();
+  const scenarioId = randomUUID();
+  await store.insertFilling(scenarioId, blueprintId, defaultScenarioPrompt, null);
+  await store.markFailed(scenarioId, 'Fill timed out.');
+  await publishFill(store, { async fill() { return offlineFill(); } }, scenarioId, defaultScenarioPrompt);
+  assert.equal((await store.scenario(scenarioId))?.status, 'failed');
+  assert.equal((await store.scenario(scenarioId))?.error, 'Fill timed out.');
+});
+
+test('workflow health fails closed until the Render tasks are configured', async () => {
+  const previous = {
+    mode: process.env.WORKFLOW_MODE,
+    key: process.env.RENDER_API_KEY,
+    scenario: process.env.SCENARIO_TASK,
+    replenish: process.env.REPLENISH_TASK,
+  };
+  process.env.WORKFLOW_MODE = 'render';
+  delete process.env.RENDER_API_KEY;
+  delete process.env.SCENARIO_TASK;
+  delete process.env.REPLENISH_TASK;
+  try {
+    const service = new ScenarioService(new MemoryScenarioStore(), new OfflineAuthor(), new InlineFillRunner(new MemoryScenarioStore(), new OfflineAuthor()), secret);
+    await assert.rejects(service.ready(), { code: 'dependency_unavailable' });
+  } finally {
+    process.env.WORKFLOW_MODE = previous.mode;
+    process.env.RENDER_API_KEY = previous.key;
+    process.env.SCENARIO_TASK = previous.scenario;
+    process.env.REPLENISH_TASK = previous.replenish;
+  }
+});
+
+test('the production blueprint shares workflow config and Slack can start a run', async () => {
+  const blueprint = await readFile(new URL('../render.yaml', import.meta.url), 'utf8');
+  const group = blueprint.slice(blueprint.indexOf('name: renderpg-config'), blueprint.indexOf('services:'));
+  assert.match(group, /key: RENDER_API_KEY/);
+  assert.match(group, /key: SCENARIO_PROVIDER/);
+  assert.match(group, /key: OKTA_AUTH\n\s+value: "on"/);
+  const slackStart = blueprint.indexOf('name: renderpg-slack-sync');
+  const slack = blueprint.slice(slackStart, blueprint.indexOf('type: workflow', slackStart));
+  assert.match(slack, /fromGroup: renderpg-config/);
+  const workflows = blueprint.slice(blueprint.indexOf('name: renderpg-workflows'), blueprint.indexOf('databases:'));
+  assert.match(workflows, /fromGroup: renderpg-config/);
+});
+
 test('sign-in claims an in-flight pool fill instead of starting another', async () => {
   const store = new MemoryScenarioStore();
   let fills = 0;

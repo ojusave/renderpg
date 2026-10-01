@@ -30,6 +30,6 @@ export function composeApplication() {
     ? new RenderAdventureRunner(required('WORKFLOW_TASK'), required('RENDER_API_KEY'))
     : new InlineAdventureRunner(repo, ai, report);
   const service = new GameService(repo, ai, required('SESSION_SECRET'), report, runner);
-  const scenario = composeScenario();
+  const scenario = composeScenario(repo.pool);
   return { app: buildApp(service, repo, true, scenario.service), repo, scenarioStore: scenario.store, prompts: scenario.prompts, scenarios: scenario.service, mode };
 }
