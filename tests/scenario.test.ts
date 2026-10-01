@@ -6,7 +6,7 @@ import { OfflineAuthor } from '../src/adapters/offline-author.js';
 import { InlineFillRunner } from '../src/adapters/inline-fill-runner.js';
 import { ScenarioService } from '../src/application/scenario-service.js';
 import { defaultScenarioPrompt } from '../src/scenario/default-prompt.js';
-import { applyChoice, openPlay } from '../src/scenario/engine.js';
+import { applyChoice, legalActions, openPlay } from '../src/scenario/engine.js';
 import { validateFill } from '../src/scenario/fill.js';
 import { offlineFill } from '../src/scenario/offline-fill.js';
 import { MemoryScenarioStore } from './scenario-memory.js';
@@ -26,22 +26,58 @@ test('fill validation rejects travel and invented excerpts', () => {
   assert.ok(validateFill(fill, defaultScenarioPrompt).some(error => error.includes('excerpt')));
 });
 
-test('transfer succeeds only after authority is verified', () => {
+test('transfer succeeds only after the owner is traced', () => {
   const fill = offlineFill();
-  const state = applyChoice(openPlay(fill), fill, 'review_account_record');
-  const unverified = applyChoice(state, fill, 'request_more_evidence');
-  const early = applyChoice(unverified, fill, 'transfer_account');
-  assert.equal(early.endingId, 'incorrect_transfer');
-  const checked = applyChoice(state, fill, 'verify_requester_authority');
-  const verified = applyChoice(checked, fill, 'transfer_account');
+  const state = applyChoice(openPlay(fill), fill, 'open_record');
+  const trusted = applyChoice(applyChoice(state, fill, 'take_word'), fill, 'transfer_account');
+  assert.equal(trusted.endingId, 'unverified_transfer');
+  const verified = applyChoice(applyChoice(state, fill, 'trace_owner'), fill, 'transfer_account');
   assert.equal(verified.endingId, 'success');
   assert.equal(verified.status, 'completed');
 });
 
+const expectedEndings: Record<string, string> = {
+  'transfer_now': 'transferred_too_early',
+  'turn_away': 'turned_away',
+  'open_record>escalate_early': 'escalated_early',
+  'open_record>trace_owner>transfer_account': 'success',
+  'open_record>trace_owner>decline_transfer': 'declined_verified',
+  'open_record>trace_owner>escalate': 'escalated_verified',
+  'open_record>take_word>transfer_account': 'unverified_transfer',
+  'open_record>take_word>decline_transfer': 'declined_unverified',
+  'open_record>take_word>escalate': 'escalated_unverified',
+};
+
+test('every path ends in the ending written for that exact situation', () => {
+  const fill = offlineFill();
+  const reached: Record<string, string> = {};
+  const walk = (state: ReturnType<typeof openPlay>, path: string[]) => {
+    const actions = legalActions(state);
+    if (!actions.length) {
+      reached[path.join('>')] = state.endingId!;
+      assert.equal(state.transcript.at(-1)!.text, fill.endings[state.endingId!].summary);
+      assert.ok(path.length <= 3);
+      return;
+    }
+    for (const action of actions) walk(applyChoice(state, fill, action), [...path, action]);
+  };
+  walk(openPlay(fill), []);
+  assert.deepEqual(reached, expectedEndings);
+});
+
+test('investigation turns show what you did and what you found', () => {
+  const fill = offlineFill();
+  const opened = applyChoice(openPlay(fill), fill, 'open_record');
+  assert.equal(opened.transcript.at(-1)!.text, `${fill.steps.open_record} ${fill.evidence.account_record.text}`);
+  const traced = applyChoice(opened, fill, 'trace_owner');
+  assert.equal(traced.transcript.at(-1)!.text, `${fill.steps.trace_owner} ${fill.evidence.owner_trace.text}`);
+  assert.deepEqual(traced.revealed, ['account_record', 'owner_trace']);
+});
+
 test('game master text is at most two sentences', () => {
   const fill = offlineFill();
-  fill.choices.review_account_record.consequence = 'One. Two. Three.';
-  const state = applyChoice(openPlay(fill), fill, 'review_account_record');
+  fill.steps.open_record = 'One. Two. Three.';
+  const state = applyChoice(openPlay(fill), fill, 'open_record');
   const text = state.transcript.at(-1)!.text;
   assert.ok((text.match(/[.!?](\s|$)/g) ?? []).length <= 2, text);
 });
@@ -52,17 +88,17 @@ test('sign-in claims a ready scenario and begin does not fill another', async ()
   const author = { async fill(prompt: string) { fills += 1; return new OfflineAuthor().fill(prompt); } };
   const service = new ScenarioService(store, author, new InlineFillRunner(store, author), secret);
   const seeded = randomUUID();
-  await store.insertFilling(seeded, 'account_ownership_v1', defaultScenarioPrompt, null);
+  await store.insertFilling(seeded, blueprintId, defaultScenarioPrompt, null);
   await store.markReady(seeded, offlineFill());
   const session = await service.signIn();
   assert.equal(session.status, 'ready');
   await new Promise(resolve => setTimeout(resolve, 30));
   const fillsAfterClaim = fills;
   const game = await service.begin(session.session_token);
-  assert.equal(game.location.id, 'review');
+  assert.equal(game.location.id, 'intake');
   assert.equal(game.available_actions.length, 3);
-  const verified = await service.choose(session.session_token, randomUUID(), 'review_account_record', game.version);
-  const decided = await service.choose(session.session_token, randomUUID(), 'verify_requester_authority', verified.version);
+  const verified = await service.choose(session.session_token, randomUUID(), 'open_record', game.version);
+  const decided = await service.choose(session.session_token, randomUUID(), 'trace_owner', verified.version);
   const ended = await service.choose(session.session_token, randomUUID(), 'transfer_account', decided.version);
   assert.equal(ended.status, 'completed');
   assert.equal(ended.ending?.id, 'success');
@@ -91,12 +127,12 @@ test('sign-in schedules pool replenishment instead of filling it inline', async 
     async schedule() { scheduled += 1; },
   });
   const seeded = randomUUID();
-  await store.insertFilling(seeded, 'account_ownership_v1', defaultScenarioPrompt, null);
+  await store.insertFilling(seeded, blueprintId, defaultScenarioPrompt, null);
   await store.markReady(seeded, offlineFill());
   const session = await service.signIn();
   assert.equal(session.status, 'ready');
   assert.equal(scheduled, 1);
-  assert.equal(await store.poolDepth('account_ownership_v1'), 0);
+  assert.equal(await store.poolDepth(blueprintId), 0);
 });
 
 test('an empty pool starts the player fill and then the pool parent', async () => {
@@ -120,7 +156,7 @@ test('pool reservation stops at the target', async () => {
   const second = await reservePoolFills(store, async () => defaultScenarioPrompt);
   assert.equal(first.length, poolTarget);
   assert.equal(second.length, 0);
-  assert.equal(await store.poolDepth('account_ownership_v1'), poolTarget);
+  assert.equal(await store.poolDepth(blueprintId), poolTarget);
 });
 
 test('the game workflow replenishes by chaining fillScenario', async () => {
@@ -145,6 +181,22 @@ test('the same prompt can produce more than one telling', () => {
   const briefings = new Set(seeds.map(seed => offlineFill(defaultScenarioPrompt, seed).briefing));
   assert.ok(briefings.size > 1);
   for (const seed of seeds) assert.deepEqual(validateFill(offlineFill(defaultScenarioPrompt, seed), defaultScenarioPrompt), []);
+});
+
+test('a session holding a case from the old blueprint is told to start over', async () => {
+  const store = new MemoryScenarioStore();
+  const author = new OfflineAuthor();
+  const service = new ScenarioService(store, author, new InlineFillRunner(store, author), secret);
+  const old = randomUUID();
+  await store.insertFilling(old, 'account_ownership_v1', defaultScenarioPrompt, null);
+  await store.markReady(old, offlineFill());
+  const session = await service.signIn();
+  const sessionId = [...store.sessions.keys()][0]!;
+  await store.setSessionScenario(sessionId, old);
+  const current = await service.current(session.session_token);
+  assert.equal(current.status, 'failed');
+  assert.match(current.message ?? '', /earlier version/);
+  await assert.rejects(service.begin(session.session_token), /earlier version/);
 });
 
 test('a fill stores the scenario id as its variation seed', async () => {

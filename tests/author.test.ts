@@ -12,7 +12,7 @@ test('Claude fill requests a different telling for the variation seed', async ()
   const author = new AnthropicAuthor('test', 'test-model', 1000, new Anthropic({ apiKey: 'test-only', maxRetries: 0, fetch: async (_url, init) => {
     const body = JSON.parse(String(init?.body));
     assert.equal(body.temperature, 1);
-    assert.equal(body.max_tokens, 1200);
+    assert.equal(body.max_tokens, 1800);
     const input = JSON.parse(body.messages[0].content);
     assert.equal(input.variationSeed, 'seed-a');
     assert.match(input.variationDirection, /account facts unchanged/);

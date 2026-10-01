@@ -1,15 +1,17 @@
-import { accountOwnershipBlueprint, actionIds, endingIds, evidenceIds, type ActionId, type EndingId, type EvidenceId } from './blueprint.js';
+import { accountOwnershipBlueprint, actionIds, endingIds, evidenceIds, stepIds, type ActionId, type EndingId, type EvidenceId, type StepId } from './blueprint.js';
 
 export interface TextSlot { text: string; sourceExcerpt: string }
-export interface ChoiceSlot { label: string; consequence: string }
+export interface ChoiceSlot { label: string }
 export interface EndingSlot { title: string; summary: string }
 
+/** Model-written words for one telling. Each slot is shown in exactly one game state. */
 export interface ScenarioFill {
   title: string;
   objective: string;
   briefing: string;
-  evidence: Record<EvidenceId, TextSlot>;
   choices: Record<ActionId, ChoiceSlot>;
+  steps: Record<StepId, string>;
+  evidence: Record<EvidenceId, TextSlot>;
   endings: Record<EndingId, EndingSlot>;
 }
 
@@ -30,9 +32,14 @@ export function validateFill(fill: ScenarioFill, sourcePrompt: string): string[]
     else if (!prompt.includes(normalized(slot.sourceExcerpt))) errors.push(`Evidence ${id} excerpt is not in the source`);
   }
   for (const id of actionIds) {
-    const choice = fill.choices?.[id];
-    if (!choice?.label?.trim() || !choice.consequence?.trim()) errors.push(`Choice ${id} is incomplete`);
-    else if (travel.test(`${choice.label} ${choice.consequence}`)) errors.push(`Choice ${id} recommends an unrealistic action`);
+    const label = fill.choices?.[id]?.label;
+    if (!label?.trim()) errors.push(`Choice ${id} is incomplete`);
+    else if (travel.test(label)) errors.push(`Choice ${id} recommends an unrealistic action`);
+  }
+  for (const id of stepIds) {
+    const step = fill.steps?.[id];
+    if (!step?.trim()) errors.push(`Step ${id} is incomplete`);
+    else if (travel.test(step)) errors.push(`Step ${id} describes an unrealistic action`);
   }
   for (const id of endingIds) {
     const ending = fill.endings?.[id];

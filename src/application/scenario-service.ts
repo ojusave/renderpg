@@ -9,6 +9,8 @@ import type { ActionId } from '../scenario/blueprint.js';
 import type { GameView } from '../game/types.js';
 import { publishFill } from './publish-fill.js';
 
+const retiredMessage = 'This case was made by an earlier version of the game. Start a new case.';
+
 export type SessionView = { status: 'preparing' | 'ready' | 'failed'; session_token: string; run_id: string | null; message: string | null; game: GameView | null };
 
 /** Claims a filled scenario at sign-in and plays it from the blueprint. */
@@ -76,6 +78,7 @@ export class ScenarioService {
     const scenario = await this.store.scenario(player.scenarioId);
     if (!scenario) throw new AppError(404, 'scenario_not_found', 'Scenario not found for this session.');
     if (scenario.status === 'failed') return this.view(token, 'failed', scenario.runId, scenario.error ?? 'The scenario could not be prepared.', null);
+    if (scenario.blueprintId !== blueprintId) return this.view(token, 'failed', scenario.runId, retiredMessage, null);
     if (!scenario.content) return this.view(token, 'preparing', scenario.runId, null, null);
     const game = player.play ? presentPlay(player.id, scenario.content, player.play) : null;
     return this.view(token, 'ready', scenario.runId, null, game);
@@ -85,6 +88,7 @@ export class ScenarioService {
   async begin(token: string): Promise<GameView> {
     const player = await this.session(token);
     const scenario = player.scenarioId ? await this.store.scenario(player.scenarioId) : null;
+    if (scenario && scenario.blueprintId !== blueprintId) throw conflict('scenario_retired', retiredMessage);
     if (!scenario?.content) throw new AppError(409, 'scenario_not_ready', 'The scenario is still being prepared.');
     if (player.play) return presentPlay(player.id, scenario.content, player.play);
     const play = openPlay(scenario.content);
@@ -101,6 +105,7 @@ export class ScenarioService {
       return prior.response;
     }
     const scenario = player.scenarioId ? await this.store.scenario(player.scenarioId) : null;
+    if (scenario && scenario.blueprintId !== blueprintId) throw conflict('scenario_retired', retiredMessage);
     if (!scenario?.content || !player.play) throw new AppError(409, 'scenario_not_ready', 'Begin the scenario before choosing a response.');
     if (player.play.version !== expectedVersion) throw conflict('stale_state', 'Another choice changed this scenario. Refresh before trying again.');
     if (!legalActions(player.play).includes(actionId as ActionId)) throw new AppError(422, 'invalid_request', 'That response is not available.');

@@ -1,19 +1,26 @@
-export const blueprintId = 'account_ownership_v1' as const;
+export const blueprintId = 'account_ownership_v2' as const;
 
 export const actionIds = [
-  'review_account_record',
-  'check_ownership_history',
-  'verify_requester_authority',
-  'request_more_evidence',
+  'open_record',
+  'transfer_now',
+  'turn_away',
+  'trace_owner',
+  'take_word',
+  'escalate_early',
   'transfer_account',
   'decline_transfer',
   'escalate',
 ] as const;
 
 export type ActionId = (typeof actionIds)[number];
-export type StageId = 'review' | 'verify' | 'decide' | 'resolution';
-export type EvidenceId = 'account_record' | 'ownership_history' | 'requester_authority';
-export type EndingId = 'success' | 'escalation' | 'incorrect_transfer' | 'declined';
+export type StageId = 'intake' | 'investigate' | 'decide' | 'resolution';
+export type EvidenceId = 'account_record' | 'owner_trace';
+export type StepId = 'open_record' | 'trace_owner' | 'take_word';
+export type EndingId =
+  | 'transferred_too_early' | 'turned_away' | 'escalated_early'
+  | 'success' | 'unverified_transfer'
+  | 'declined_verified' | 'declined_unverified'
+  | 'escalated_verified' | 'escalated_unverified';
 
 export interface StageSlot {
   id: StageId;
@@ -21,20 +28,24 @@ export interface StageSlot {
   actions: ActionId[];
 }
 
-/** Authored investigation flow. The model cannot add stages or actions. */
-export const accountOwnershipBlueprint: { id: typeof blueprintId; version: 1; stages: StageSlot[] } = {
+/** Authored investigation flow. The model writes the words; it cannot add stages or actions. */
+export const accountOwnershipBlueprint: { id: typeof blueprintId; version: 2; stages: StageSlot[] } = {
   id: blueprintId,
-  version: 1,
+  version: 2,
   stages: [
-    { id: 'review', label: 'What do you examine first?', actions: ['review_account_record', 'check_ownership_history', 'escalate'] },
-    { id: 'verify', label: 'How do you treat the request?', actions: ['verify_requester_authority', 'request_more_evidence', 'transfer_account'] },
+    { id: 'intake', label: 'What do you do first?', actions: ['open_record', 'transfer_now', 'turn_away'] },
+    { id: 'investigate', label: 'How do you identify the rightful owner?', actions: ['trace_owner', 'take_word', 'escalate_early'] },
     { id: 'decide', label: 'What is your decision?', actions: ['transfer_account', 'decline_transfer', 'escalate'] },
     { id: 'resolution', label: 'Resolution', actions: [] },
   ],
 };
 
-export const evidenceIds: EvidenceId[] = ['account_record', 'ownership_history', 'requester_authority'];
-export const endingIds: EndingId[] = ['success', 'escalation', 'incorrect_transfer', 'declined'];
+export const evidenceIds: EvidenceId[] = ['account_record', 'owner_trace'];
+export const stepIds: StepId[] = ['open_record', 'trace_owner', 'take_word'];
+export const endingIds: EndingId[] = [
+  'transferred_too_early', 'turned_away', 'escalated_early', 'success', 'unverified_transfer',
+  'declined_verified', 'declined_unverified', 'escalated_verified', 'escalated_unverified',
+];
 
 export const poolTarget = 3;
 export const staleFillMs = 15 * 60 * 1000;

@@ -75,7 +75,10 @@ function choice(game: View, text: string): string {
 }
 function show(game: View) {
   console.log('\n' + stripVTControlCharacters(game.transcript.at(-1)?.text ?? ''));
-  if (game.available_actions.length) console.log(game.available_actions.map((action, index) => `${index + 1}. ${stripVTControlCharacters(action.label)}`).join('\n'));
+  if (game.available_actions.length) {
+    console.log(`\n${stripVTControlCharacters(game.stage)}`);
+    console.log(game.available_actions.map((action, index) => `${index + 1}. ${stripVTControlCharacters(action.label)}`).join('\n'));
+  }
   console.log(`[Status: ${game.status} | ${stripVTControlCharacters(game.stage)} | turn ${game.version}]`);
 }
 const rl = createInterface({ input: process.stdin, output: process.stdout });

@@ -19,20 +19,18 @@ export interface PlayState {
 }
 
 const zero: Stats = { energy: 0, focus: 0, reputation: 0, team_trust: 0 };
-const toneOf: Record<ActionId, ChoiceTone> = {
-  review_account_record: 'careful', check_ownership_history: 'careful',
-  verify_requester_authority: 'team', request_more_evidence: 'careful', escalate: 'team',
-  decline_transfer: 'careful', transfer_account: 'bold',
-};
-const evidenceOf: Partial<Record<ActionId, EvidenceId>> = {
-  review_account_record: 'account_record', check_ownership_history: 'ownership_history',
-  verify_requester_authority: 'requester_authority', request_more_evidence: 'requester_authority',
+
+const endingResult: Record<EndingId, EndingResult> = {
+  transferred_too_early: 'failure', turned_away: 'failure', escalated_early: 'partial_success',
+  success: 'success', unverified_transfer: 'failure',
+  declined_verified: 'failure', declined_unverified: 'partial_success',
+  escalated_verified: 'partial_success', escalated_unverified: 'partial_success',
 };
 
 /** Opens a play-through on the first question. The briefing is the scene, not a choice. */
 export function openPlay(fill: ScenarioFill): PlayState {
   return {
-    stage: 'review', revealed: [], verified: false, used: [], version: 0, status: 'active', endingId: null,
+    stage: 'intake', revealed: [], verified: false, used: [], version: 0, status: 'active', endingId: null,
     stats: { ...INITIAL_STATS }, lastChanges: { ...zero }, tally: { careful: 0, team: 0, bold: 0, reckless: 0 },
     transcript: [{ id: randomUUID(), input: null, outcome: 'opening', text: `${fill.title}\n${fill.objective}\n${fill.briefing}` }],
   };
@@ -44,70 +42,70 @@ export function legalActions(state: PlayState): ActionId[] {
   return accountOwnershipBlueprint.stages.find(item => item.id === state.stage)?.actions ?? [];
 }
 
-function shift(stats: Stats, changes: Stats): Stats {
-  return {
-    energy: Math.max(0, Math.min(100, stats.energy + changes.energy)),
-    focus: Math.max(0, Math.min(100, stats.focus + changes.focus)),
-    reputation: Math.max(0, Math.min(100, stats.reputation + changes.reputation)),
-    team_trust: Math.max(0, Math.min(100, stats.team_trust + changes.team_trust)),
-  };
-}
-
-function changesFor(action: ActionId, verified: boolean): Stats {
-  if (action === 'transfer_account') return verified ? { ...zero, reputation: 10, team_trust: 6 } : { ...zero, reputation: -12 };
-  if (action === 'escalate') return { ...zero, team_trust: 6 };
-  if (action === 'verify_requester_authority') return { ...zero, team_trust: 8 };
-  if (action === 'decline_transfer') return { ...zero, reputation: 4 };
-  return { ...zero, focus: 4 };
-}
-
 /** Keeps game master text to at most two sentences. */
 export function twoSentences(text: string): string {
   const sentences = text.replace(/\s+/g, ' ').trim().match(/[^.!?]+[.!?]+/g) ?? [text.trim()];
   return sentences.slice(0, 2).map(sentence => sentence.trim()).join(' ');
 }
 
+function shift(stats: Stats, changes: Stats): Stats {
+  const clamp = (value: number) => Math.max(0, Math.min(100, value));
+  return {
+    energy: clamp(stats.energy + changes.energy), focus: clamp(stats.focus + changes.focus),
+    reputation: clamp(stats.reputation + changes.reputation), team_trust: clamp(stats.team_trust + changes.team_trust),
+  };
+}
+
+type Outcome = { tone: ChoiceTone; changes: Partial<Stats>; next?: StageId; reveal?: EvidenceId; verified?: boolean; ending?: EndingId };
+
+/** The whole case as a table: what each choice means in the current state. */
+function outcomeOf(action: ActionId, verified: boolean): Outcome {
+  switch (action) {
+    case 'open_record': return { tone: 'careful', changes: { focus: 4 }, next: 'investigate', reveal: 'account_record' };
+    case 'transfer_now': return { tone: 'reckless', changes: { reputation: -12 }, ending: 'transferred_too_early' };
+    case 'turn_away': return { tone: 'bold', changes: { reputation: -8 }, ending: 'turned_away' };
+    case 'trace_owner': return { tone: 'careful', changes: { focus: 4, team_trust: 4 }, next: 'decide', reveal: 'owner_trace', verified: true };
+    case 'take_word': return { tone: 'bold', changes: { reputation: -4 }, next: 'decide' };
+    case 'escalate_early': return { tone: 'team', changes: { team_trust: 2 }, ending: 'escalated_early' };
+    case 'transfer_account': return verified
+      ? { tone: 'careful', changes: { reputation: 10, team_trust: 6 }, ending: 'success' }
+      : { tone: 'reckless', changes: { reputation: -12 }, ending: 'unverified_transfer' };
+    case 'decline_transfer': return verified
+      ? { tone: 'bold', changes: { reputation: -6 }, ending: 'declined_verified' }
+      : { tone: 'careful', changes: { reputation: 2 }, ending: 'declined_unverified' };
+    case 'escalate': return verified
+      ? { tone: 'team', changes: { team_trust: 2 }, ending: 'escalated_verified' }
+      : { tone: 'team', changes: { team_trust: 6 }, ending: 'escalated_unverified' };
+  }
+}
+
 function said(input: string, outcome: Turn['outcome'], text: string): Turn {
   return { id: randomUUID(), input, outcome, text: twoSentences(text) };
 }
 
-function finish(state: PlayState, endingId: EndingId, text: string, input: string): PlayState {
-  return {
-    ...state, stage: 'resolution', status: 'completed', endingId, version: state.version + 1,
-    transcript: [...state.transcript, said(input, 'completed', text)],
-  };
-}
-
-/** Applies one blueprint action. Transfer succeeds only after authority is verified. */
+/** Applies one blueprint action. The shown text always belongs to the state the choice produced. */
 export function applyChoice(state: PlayState, fill: ScenarioFill, action: ActionId): PlayState {
   if (!legalActions(state).includes(action)) return {
     ...state, version: state.version + 1, lastChanges: { ...zero },
     transcript: [...state.transcript, said(action, 'rejected', 'That response is not available at this stage.')],
   };
-  const choice = fill.choices[action];
-  const revealed = evidenceOf[action] && !state.revealed.includes(evidenceOf[action]!) ? [...state.revealed, evidenceOf[action]!] : state.revealed;
-  const verified = state.verified || action === 'verify_requester_authority';
-  const changes = changesFor(action, verified);
-  const tone = action === 'transfer_account' && !verified ? 'reckless' : toneOf[action];
-  const next: PlayState = {
-    ...state, revealed, verified, used: [...state.used, action], version: state.version + 1,
-    stats: shift(state.stats, changes), lastChanges: changes, tally: { ...state.tally, [tone]: state.tally[tone] + 1 },
+  const outcome = outcomeOf(action, state.verified);
+  const changes = { ...zero, ...outcome.changes };
+  const base: PlayState = {
+    ...state, used: [...state.used, action], version: state.version + 1,
+    verified: state.verified || Boolean(outcome.verified),
+    revealed: outcome.reveal ? [...state.revealed, outcome.reveal] : state.revealed,
+    stats: shift(state.stats, changes), lastChanges: changes,
+    tally: { ...state.tally, [outcome.tone]: state.tally[outcome.tone] + 1 },
   };
-  if (action === 'review_account_record' || action === 'check_ownership_history') {
-    return { ...next, stage: 'verify', transcript: [...state.transcript, said(action, 'applied', `${fill.evidence[evidenceOf[action]!].text} ${choice.consequence}`)] };
-  }
-  if (action === 'verify_requester_authority' || action === 'request_more_evidence') {
-    return { ...next, stage: 'decide', transcript: [...state.transcript, said(action, 'applied', `${fill.evidence.requester_authority.text} ${choice.consequence}`)] };
-  }
-  if (action === 'escalate') return finish(next, 'escalation', `${choice.consequence} ${fill.endings.escalation.summary}`, action);
-  if (action === 'decline_transfer') return finish(next, 'declined', `${choice.consequence} ${fill.endings.declined.summary}`, action);
-  const ending: EndingId = verified ? 'success' : 'incorrect_transfer';
-  return finish(next, ending, `${choice.consequence} ${fill.endings[ending].summary}`, action);
+  if (outcome.ending) return {
+    ...base, stage: 'resolution', status: 'completed', endingId: outcome.ending,
+    transcript: [...state.transcript, said(action, 'completed', fill.endings[outcome.ending].summary)],
+  };
+  const step = fill.steps[action as keyof ScenarioFill['steps']];
+  const text = outcome.reveal ? `${step} ${fill.evidence[outcome.reveal].text}` : step;
+  return { ...base, stage: outcome.next!, transcript: [...state.transcript, said(action, 'applied', text)] };
 }
-
-const endingResult: Record<EndingId, EndingResult> = {
-  success: 'success', escalation: 'partial_success', incorrect_transfer: 'failure', declined: 'failure',
-};
 
 /** Projects a play-through into the existing game view. */
 export function presentPlay(playId: string, fill: ScenarioFill, state: PlayState): GameView {
